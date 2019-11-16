@@ -287,8 +287,11 @@ func (a *StaticAutoscaler) RunOnce(currentTime time.Time) errors.AutoscalerError
 	// TODO: andrewskim - add protection for ready AWS nodes.
 	fixedSomething, err := fixNodeGroupSize(autoscalingContext, a.clusterStateRegistry, currentTime)
 	if err != nil {
-		klog.Errorf("Failed to fix node group sizes: %v", err)
-		return errors.ToAutoscalerError(errors.CloudProviderError, err)
+		// retry in the next loop
+		klog.Warningf("Failed to fix node group sizes: %v", err)
+		// return nil
+		// klog.Errorf("Failed to fix node group sizes: %v", err)
+		// return errors.ToAutoscalerError(errors.CloudProviderError, err)
 	}
 	if fixedSomething {
 		klog.V(0).Infof("Some node group target size was fixed, skipping the iteration")
