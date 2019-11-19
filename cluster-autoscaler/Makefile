@@ -1,6 +1,6 @@
 all: build
 
-TAG?=dev
+TAG?=v0.1
 FLAGS=
 ENVVAR=
 GOOS?=linux
@@ -34,13 +34,13 @@ dev-release: build-binary execute-release
 make-image:
 ifdef BASEIMAGE
 	docker build --pull --build-arg BASEIMAGE=${BASEIMAGE} \
-	    -t ${REGISTRY}/cluster-autoscaler${PROVIDER}:${TAG} .
+	    -t ${REGISTRY}/cluster-autoscaler-logging:${TAG} .
 else
-	docker build --pull -t ${REGISTRY}/cluster-autoscaler${PROVIDER}:${TAG} .
+	docker build --pull -t ${REGISTRY}/cluster-autoscaler-logging:${TAG} .
 endif
 
 push-image:
-	./push_image.sh ${REGISTRY}/cluster-autoscaler${PROVIDER}:${TAG}
+	./push_image.sh ${REGISTRY}/cluster-autoscaler-logging:${TAG}
 
 execute-release: make-image push-image
 

@@ -266,8 +266,9 @@ func UpdateDuration(label FunctionLabel, duration time.Duration) {
 	// TODO(maciekpytel): remove second condition if we manage to get
 	// asynchronous node drain
 	if duration > LogLongDurationThreshold && label != ScaleDown {
-		klog.V(4).Infof("Function %s took %v to complete", label, duration)
+		klog.V(1).Infof("Function %s took %v to complete", label, duration)
 	}
+	klog.V(1).Info("Updating duration for function with label: %+v, %+v to", label, duration)
 	functionDuration.WithLabelValues(string(label)).Observe(duration.Seconds())
 }
 

@@ -579,11 +579,14 @@ func (csr *ClusterStateRegistry) updateReadinessStats(currentTime time.Time) {
 
 // Calculates which node groups have incorrect size.
 func (csr *ClusterStateRegistry) updateIncorrectNodeGroupSizes(currentTime time.Time) {
+	klog.V(0).Infof("Updating incorrect node group sizes in the cluster registry")
+
 	result := make(map[string]IncorrectNodeGroupSize)
 	for _, nodeGroup := range csr.cloudProvider.NodeGroups() {
+		klog.V(0).Infof("Looping for node group: %+v", nodeGroup)
 		acceptableRange, found := csr.acceptableRanges[nodeGroup.Id()]
 		if !found {
-			klog.Warningf("Acceptable range for node group %s not found", nodeGroup.Id())
+			klog.V(0).Infof("Acceptable range for node group %s not found", nodeGroup.Id())
 			continue
 		}
 		readiness, found := csr.perNodeGroupReadiness[nodeGroup.Id()]

@@ -502,13 +502,17 @@ func removeOldUnregisteredNodes(unregisteredNodes []clusterstate.UnregisteredNod
 // if the difference was constant for a prolonged time. Returns true if managed
 // to fix something.
 func fixNodeGroupSize(context *context.AutoscalingContext, clusterStateRegistry *clusterstate.ClusterStateRegistry, currentTime time.Time) (bool, error) {
+	klog.V(1).Info("Inside the fix Node Group Size")
 	fixed := false
 	for _, nodeGroup := range context.CloudProvider.NodeGroups() {
+		klog.V(1).Infof("Iterating through node group: %+v", nodeGroup)
 		incorrectSize := clusterStateRegistry.GetIncorrectNodeGroupSize(nodeGroup.Id())
+		klog.V(1).Infof("Incorrect size: %+v", incorrectSize)
 		if incorrectSize == nil {
 			continue
 		}
 		if incorrectSize.FirstObserved.Add(context.MaxNodeProvisionTime).Before(currentTime) {
+			klog.V(1).Infof("Incorrect size current: %+v, expected: %+v", incorrectSize.CurrentSize, incorrectSize.ExpectedSize)
 			delta := incorrectSize.CurrentSize - incorrectSize.ExpectedSize
 			if delta < 0 {
 				klog.V(0).Infof("Decreasing size of %s, expected=%d current=%d delta=%d", nodeGroup.Id(),
@@ -516,6 +520,7 @@ func fixNodeGroupSize(context *context.AutoscalingContext, clusterStateRegistry 
 					incorrectSize.CurrentSize,
 					delta)
 				if err := nodeGroup.DecreaseTargetSize(delta); err != nil {
+					klog.V(1).Infof("Got error while decreasing target size")
 					return fixed, fmt.Errorf("failed to decrease %s: %v", nodeGroup.Id(), err)
 				}
 				fixed = true
