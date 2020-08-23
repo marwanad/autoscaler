@@ -18,6 +18,27 @@ import (
 	"time"
 )
 
+const (
+	// The path of deployment parameters for standard vm.
+	deploymentParametersPath = "/var/lib/azure/azuredeploy.parameters.json"
+
+	metadataURL                    = "http://169.254.169.254/metadata/instance"
+
+	// backoff
+	backoffRetriesDefault  = 6
+	backoffExponentDefault = 1.5
+	backoffDurationDefault = 5 // in seconds
+	backoffJitterDefault   = 1.0
+
+	// rate limit
+	rateLimitQPSDefault         float32 = 1.0
+	rateLimitBucketDefault              = 5
+	rateLimitReadQPSEnvVar              = "RATE_LIMIT_READ_QPS"
+	rateLimitReadBucketsEnvVar          = "RATE_LIMIT_READ_BUCKETS"
+	rateLimitWriteQPSEnvVar             = "RATE_LIMIT_WRITE_QPS"
+	rateLimitWriteBucketsEnvVar         = "RATE_LIMIT_WRITE_BUCKETS"
+)
+
 // CloudProviderRateLimitConfig indicates the rate limit config for each clients.
 type CloudProviderRateLimitConfig struct {
 	// The default rate limit config options.
