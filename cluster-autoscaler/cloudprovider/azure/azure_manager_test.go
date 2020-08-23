@@ -958,13 +958,13 @@ func TestFetchAutoAsgsVmss(t *testing.T) {
 }
 
 func TestInitializeCloudProviderRateLimitConfigWithNoConfigReturnsNoError(t *testing.T) {
-	err := InitializeCloudProviderRateLimitConfig(nil)
+	err := initializeCloudProviderRateLimitConfig(nil)
 	assert.Nil(t, err, "err should be nil")
 }
 
 func TestInitializeCloudProviderRateLimitConfigWithNoRateLimitSettingsReturnsDefaults(t *testing.T) {
 	emptyConfig := &CloudProviderRateLimitConfig{}
-	err := InitializeCloudProviderRateLimitConfig(emptyConfig)
+	err := initializeCloudProviderRateLimitConfig(emptyConfig)
 
 	assert.NoError(t, err)
 	assert.Equal(t, emptyConfig.CloudProviderRateLimitQPS, rateLimitQPSDefault)
@@ -980,7 +980,7 @@ func TestInitializeCloudProviderRateLimitConfigWithReadRateLimitSettingsFromEnv(
 	os.Setenv(rateLimitReadQPSEnvVar, fmt.Sprintf("%.1f", rateLimitReadQPS))
 	os.Setenv(rateLimitReadBucketsEnvVar, fmt.Sprintf("%d", rateLimitReadBuckets))
 
-	err := InitializeCloudProviderRateLimitConfig(emptyConfig)
+	err := initializeCloudProviderRateLimitConfig(emptyConfig)
 	assert.NoError(t, err)
 	assert.Equal(t, emptyConfig.CloudProviderRateLimitQPS, rateLimitReadQPS)
 	assert.Equal(t, emptyConfig.CloudProviderRateLimitBucket, rateLimitReadBuckets)
@@ -1003,7 +1003,7 @@ func TestInitializeCloudProviderRateLimitConfigWithReadAndWriteRateLimitSettings
 	os.Setenv(rateLimitWriteQPSEnvVar, fmt.Sprintf("%.1f", rateLimitWriteQPS))
 	os.Setenv(rateLimitWriteBucketsEnvVar, fmt.Sprintf("%d", rateLimitWriteBuckets))
 
-	err := InitializeCloudProviderRateLimitConfig(emptyConfig)
+	err := initializeCloudProviderRateLimitConfig(emptyConfig)
 
 	assert.NoError(t, err)
 	assert.Equal(t, emptyConfig.CloudProviderRateLimitQPS, rateLimitReadQPS)
@@ -1037,7 +1037,7 @@ func TestInitializeCloudProviderRateLimitConfigWithReadAndWriteRateLimitAlreadyS
 	os.Setenv(rateLimitWriteQPSEnvVar, "99")
 	os.Setenv(rateLimitWriteBucketsEnvVar, "99")
 
-	err := InitializeCloudProviderRateLimitConfig(configWithRateLimits)
+	err := initializeCloudProviderRateLimitConfig(configWithRateLimits)
 
 	assert.NoError(t, err)
 	assert.Equal(t, configWithRateLimits.CloudProviderRateLimitQPS, rateLimitReadQPS)
@@ -1116,7 +1116,7 @@ func TestInitializeCloudProviderRateLimitConfigWithInvalidReadAndWriteRateLimitS
 			os.Setenv(rateLimitWriteBucketsEnvVar, fmt.Sprintf("%d", rateLimitWriteBuckets))
 		}
 
-		err := InitializeCloudProviderRateLimitConfig(emptyConfig)
+		err := initializeCloudProviderRateLimitConfig(emptyConfig)
 
 		assert.Equal(t, test.expectedErr, err != nil, "TestCase[%d]: %s, return error: %v", i, test.desc, err)
 		assert.Equal(t, test.expectedErrMsg, err, "TestCase[%d]: %s, expected: %v, return: %v", i, test.desc, test.expectedErrMsg, err)
