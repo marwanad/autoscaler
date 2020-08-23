@@ -17,185 +17,172 @@ limitations under the License.
 package azure
 
 import (
-	"regexp"
-	"strings"
 	"sync"
 
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	klog "k8s.io/klog/v2"
 )
 
-var (
-	virtualMachineRE = regexp.MustCompile(`^azure://(?:.*)/providers/Microsoft.Compute/virtualMachines/(.+)$`)
-)
 
-type asgCache struct {
-	registeredAsgs     []cloudprovider.NodeGroup
-	instanceToAsg      map[azureRef]cloudprovider.NodeGroup
-	notInRegisteredAsg map[azureRef]bool
-	mutex              sync.Mutex
-	interrupt          chan struct{}
+type azureCache struct {
+	registeredNodeGroups      map[azureRef]cloudprovider.NodeGroup
+	instanceToNodeGroup       map[azureRef]cloudprovider.NodeGroup
+	notInRegisteredNodeGroups map[azureRef]struct{}
+	mutex                     sync.Mutex
+	interrupt                 chan struct{}
 }
 
-func newAsgCache() (*asgCache, error) {
-	cache := &asgCache{
-		registeredAsgs:     make([]cloudprovider.NodeGroup, 0),
-		instanceToAsg:      make(map[azureRef]cloudprovider.NodeGroup),
-		notInRegisteredAsg: make(map[azureRef]bool),
-		interrupt:          make(chan struct{}),
+func NewAzureCache() *azureCache {
+	cache := &azureCache{
+		registeredNodeGroups:      make(map[azureRef]cloudprovider.NodeGroup),
+		instanceToNodeGroup:       make(map[azureRef]cloudprovider.NodeGroup),
+		notInRegisteredNodeGroups: make(map[azureRef]struct{}),
+		interrupt:                 make(chan struct{}),
 	}
-
-	cache.mutex.Lock()
-	defer cache.mutex.Unlock()
-	if err := cache.regenerate(); err != nil {
-		klog.Errorf("Error while regenerating Asg cache: %v", err)
-	}
-
-	return cache, nil
+	return cache
 }
 
-// Register registers a node group if it hasn't been registered.
-func (m *asgCache) Register(asg cloudprovider.NodeGroup) bool {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+// Register registers a node group if it hasn't been registered or its config has changed
+func (az *azureCache) Register(newNg cloudprovider.NodeGroup) bool {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
 
-	for i := range m.registeredAsgs {
-		if existing := m.registeredAsgs[i]; strings.EqualFold(existing.Id(), asg.Id()) {
-			e := existing.(*ScaleSet)
-			a := asg.(*ScaleSet)
-			if e.minSize == a.minSize && e.maxSize == a.maxSize && e.curSize == a.curSize {
-				return false
-			}
-
-			m.registeredAsgs[i] = asg
-			klog.V(4).Infof("ASG %q updated", asg.Id())
-			m.invalidateUnownedInstanceCache()
-			return true
+	newNgAzureRef := azureRef{newNg.Id()}
+	existing, found := az.registeredNodeGroups[newNgAzureRef]
+	if found {
+		if existing.MinSize() == newNg.MinSize() && existing.MaxSize() == newNg.MaxSize()  {
+			return false
 		}
+		az.registeredNodeGroups[newNgAzureRef] = newNg
+		klog.V(4).Infof("Updating node group %q", newNgAzureRef.String())
+		return true
 	}
 
-	klog.V(4).Infof("Registering ASG %q", asg.Id())
-	m.registeredAsgs = append(m.registeredAsgs, asg)
-	m.invalidateUnownedInstanceCache()
+	klog.V(4).Infof("Registering node group %q", newNgAzureRef.String())
+	az.registeredNodeGroups[newNgAzureRef] = newNg
 	return true
 }
 
-func (m *asgCache) invalidateUnownedInstanceCache() {
-	klog.V(4).Info("Invalidating unowned instance cache")
-	m.notInRegisteredAsg = make(map[azureRef]bool)
-}
+// Unregister returns true if the node group has been removed and false otherwise
+func (az *azureCache) Unregister(toUnregister cloudprovider.NodeGroup) bool {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
 
-// Unregister ASG. Returns true if the ASG was unregistered.
-func (m *asgCache) Unregister(asg cloudprovider.NodeGroup) bool {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-
-	updated := make([]cloudprovider.NodeGroup, 0, len(m.registeredAsgs))
-	changed := false
-	for _, existing := range m.registeredAsgs {
-		if strings.EqualFold(existing.Id(), asg.Id()) {
-			klog.V(1).Infof("Unregistered ASG %s", asg.Id())
-			changed = true
-			continue
-		}
-		updated = append(updated, existing)
+	toBeRemovedAzureRef:= azureRef{toUnregister.Id()}
+	_, found := az.registeredNodeGroups[toBeRemovedAzureRef]
+	if found {
+		klog.V(1).Infof("Unregistered node group %q", toBeRemovedAzureRef.String())
+		delete(az.registeredNodeGroups, toBeRemovedAzureRef)
+		az.removeInstancesForNodegroup(toBeRemovedAzureRef)
+		return true
 	}
-	m.registeredAsgs = updated
-	return changed
+	return false
 }
 
-func (m *asgCache) get() []cloudprovider.NodeGroup {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+func (az *azureCache) getNodeGroups() []cloudprovider.NodeGroup {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
 
-	return m.registeredAsgs
+	nodeGroups := make([]cloudprovider.NodeGroup, 0, len(az.registeredNodeGroups))
+	for _, ng := range az.registeredNodeGroups {
+		nodeGroups = append(nodeGroups, ng)
+	}
+	return nodeGroups
 }
 
-// FindForInstance returns Asg of the given Instance
-func (m *asgCache) FindForInstance(instance *azureRef, vmType string) (cloudprovider.NodeGroup, error) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+// GetNodeGroupForInstance returns the node group of the given Instance
+func (az *azureCache) GetNodeGroupForInstance(instance *azureRef, vmType string) (cloudprovider.NodeGroup, error) {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
 
-	klog.V(4).Infof("FindForInstance: starts, ref: %s", instance.Name)
+	klog.V(4).Infof("GetNodeGroupForInstance: starts, ref: %s", instance.String())
 	resourceID, err := convertResourceGroupNameToLower(instance.Name)
-	klog.V(4).Infof("FindForInstance: resourceID: %s", resourceID)
 	if err != nil {
 		return nil, err
 	}
 	inst := azureRef{Name: resourceID}
-	if m.notInRegisteredAsg[inst] {
+
+	if _, found := az.notInRegisteredNodeGroups[inst]; found {
 		// We already know we don't own this instance. Return early and avoid
 		// additional calls.
-		klog.V(4).Infof("FindForInstance: Couldn't find NodeGroup of instance %q", inst)
+		klog.V(4).Infof("GetNodeGroupForInstance: Couldn't find NodeGroup for instance %q", inst)
 		return nil, nil
 	}
 
-	if vmType == vmTypeVMSS {
-		// Omit virtual machines not managed by vmss.
-		if ok := virtualMachineRE.Match([]byte(inst.Name)); ok {
-			klog.V(3).Infof("Instance %q is not managed by vmss, omit it in autoscaler", instance.Name)
-			m.notInRegisteredAsg[inst] = true
-			return nil, nil
-		}
-	}
-
-	if vmType == vmTypeStandard {
-		// Omit virtual machines with providerID not in Azure resource ID format.
-		if ok := virtualMachineRE.Match([]byte(inst.Name)); !ok {
-			klog.V(3).Infof("Instance %q is not in Azure resource ID format, omit it in autoscaler", instance.Name)
-			m.notInRegisteredAsg[inst] = true
+	// Omit virtual machines not managed by vmss and virtual machines with invalid providerId
+	if vmType == vmTypeVMSS  || vmType == vmTypeStandard{
+		if ok := validProviderIdRe.Match([]byte(inst.Name)); ok {
+			klog.V(3).Infof("Instance %q is not managed by VMSS or has an invalid providerId format, adding it to the unowned list", instance.Name)
+			az.notInRegisteredNodeGroups[inst] = struct{}{}
 			return nil, nil
 		}
 	}
 
 	// Look up caches for the instance.
-	klog.V(6).Infof("FindForInstance: attempting to retrieve instance %v from cache", m.instanceToAsg)
-	if asg := m.getInstanceFromCache(inst.Name); asg != nil {
-		klog.V(4).Infof("FindForInstance: found asg %s in cache", asg.Id())
-		return asg, nil
+	klog.V(6).Infof("GetNodeGroupForInstance: attempting to retrieve instance %v from cache", az.instanceToNodeGroup)
+	if ng := az.getNodeGroupFromCacheNoLock(inst.Name); ng != nil {
+		klog.V(4).Infof("GetNodeGroupForInstance: instance %q belongs to node group %q in cache", inst.Name, ng.Id())
+		return ng, nil
 	}
-	klog.V(4).Infof("FindForInstance: Couldn't find NodeGroup of instance %q", inst)
+	klog.V(4).Infof("GetNodeGroupForInstance: Couldn't find node group for instance %q", inst)
 	return nil, nil
 }
 
-// Cleanup closes the channel to signal the go routine to stop that is handling the cache
-func (m *asgCache) Cleanup() {
-	close(m.interrupt)
-}
+func (az *azureCache) RegenerateInstanceCache() error {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
 
-func (m *asgCache) regenerate() error {
-	newCache := make(map[azureRef]cloudprovider.NodeGroup)
+	klog.V(4).Infof("RegenerateInstanceCache: regenerating instance cache for all node groups")
 
-	for _, nsg := range m.registeredAsgs {
-		klog.V(6).Infof("regenerate: finding nodes for nsg %+v", nsg)
-		instances, err := nsg.Nodes()
+	az.instanceToNodeGroup = make(map[azureRef]cloudprovider.NodeGroup)
+	az.notInRegisteredNodeGroups = make(map[azureRef]struct{})
+
+	for ngRef, _ := range az.registeredNodeGroups {
+		err := az.regenerateInstanceCacheForNodeGroupNoLock(ngRef)
 		if err != nil {
 			return err
 		}
-		klog.V(6).Infof("regenerate: found nodes for nsg %v: %+v", nsg, instances)
-
-		for _, instance := range instances {
-			ref := azureRef{Name: instance.Id}
-			newCache[ref] = nsg
-		}
 	}
+	return nil
+}
 
-	m.instanceToAsg = newCache
+func (az *azureCache) regenerateInstanceCacheForNodeGroupNoLock(ngRef azureRef) error {
+	klog.V(4).Infof("regenerateInstanceCacheForNodeGroupNoLock: regenerating instance cache for node group: %s", ngRef.String())
+	az.removeInstancesForNodegroup(ngRef)
 
-	// Invalidating unowned instance cache.
-	m.invalidateUnownedInstanceCache()
+	ng, _ := az.registeredNodeGroups[ngRef]
+	instances, err := ng.Nodes()
+	if err != nil {
+		return err
+	}
+	klog.V(6).Infof("regenerateInstanceCacheForNodeGroupNoLock: found nodes for node group %v: %+v", ng, instances)
+	for _, instance := range instances {
+		ref := azureRef{Name: instance.Id}
+		az.instanceToNodeGroup[ref] = ng
+	}
 
 	return nil
 }
 
-// Get node group from cache. nil would be return if not found.
-// Should be call with lock protected.
-func (m *asgCache) getInstanceFromCache(providerID string) cloudprovider.NodeGroup {
-	for instanceID, asg := range m.instanceToAsg {
-		if strings.EqualFold(instanceID.GetKey(), providerID) {
-			return asg
+func (az *azureCache) removeInstancesForNodegroup(toBeRemovedRef azureRef) {
+	for instanceRef, nodeGroup := range az.instanceToNodeGroup {
+		if toBeRemovedRef.String() == nodeGroup.Id() {
+			delete(az.instanceToNodeGroup, instanceRef)
+			delete(az.notInRegisteredNodeGroups, instanceRef)
 		}
 	}
+}
 
+// Retrieves a node group for a given instance if it exists in the cache
+func (az *azureCache) getNodeGroupFromCacheNoLock(providerID string) cloudprovider.NodeGroup {
+	ng, found := az.instanceToNodeGroup[azureRef{Name: providerID}]
+	if found {
+		return ng
+	}
 	return nil
+}
+
+// Cleanup closes the channel to signal the go routine to stop that is handling the cache
+func (az *azureCache) Cleanup() {
+	close(az.interrupt)
 }

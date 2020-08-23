@@ -644,7 +644,7 @@ func TestFetchExplicitAsgs(t *testing.T) {
 	manager.azClient.virtualMachineScaleSetVMsClient = mockVMSSVMClient
 	manager.fetchExplicitAsgs(ngdo.NodeGroupSpecs)
 
-	asgs := manager.asgCache.get()
+	asgs := manager.azCache.getNodeGroups()
 	assert.Equal(t, 1, len(asgs))
 	assert.Equal(t, name, asgs[0].Id())
 	assert.Equal(t, min, asgs[0].MinSize())
@@ -940,11 +940,11 @@ func TestFetchAutoAsgsVmss(t *testing.T) {
 	manager.asgAutoDiscoverySpecs = specs
 
 	// assert cache is empty before fetching auto asgs
-	asgs := manager.asgCache.get()
+	asgs := manager.azCache.getNodeGroups()
 	assert.Equal(t, 0, len(asgs))
 
 	manager.fetchAutoAsgs()
-	asgs = manager.asgCache.get()
+	asgs = manager.azCache.getNodeGroups()
 	assert.Equal(t, 1, len(asgs))
 	assert.Equal(t, vmssName, asgs[0].Id())
 	assert.Equal(t, minVal, asgs[0].MinSize())
@@ -953,7 +953,7 @@ func TestFetchAutoAsgsVmss(t *testing.T) {
 	// test explicitlyConfigured
 	manager.explicitlyConfigured[vmssName] = true
 	manager.fetchAutoAsgs()
-	asgs = manager.asgCache.get()
+	asgs = manager.azCache.getNodeGroups()
 	assert.Equal(t, 1, len(asgs))
 }
 

@@ -19,6 +19,7 @@ package azure
 import (
 	"io"
 	"os"
+	"regexp"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -39,6 +40,7 @@ var (
 		"nvidia-tesla-p100": {},
 		"nvidia-tesla-v100": {},
 	}
+	validProviderIdRe = regexp.MustCompile(`(?i)^azure:///subscriptions/(.+?)/resourcegroups/(.+?)/providers/Microsoft.Compute/virtualMachines/(.+)$`)
 )
 
 // AzureCloudProvider provides implementation of CloudProvider interface for Azure.

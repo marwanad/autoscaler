@@ -82,7 +82,7 @@ type AzureManager struct {
 	azClient *azClient
 	env      azure.Environment
 
-	asgCache              *asgCache
+	azCache               *azureCache
 	lastRefresh           time.Time
 	asgAutoDiscoverySpecs []labelAutoDiscoveryConfig
 	explicitlyConfigured  map[string]bool
@@ -121,11 +121,7 @@ func CreateAzureManager(configReader io.Reader, discoveryOpts cloudprovider.Node
 		explicitlyConfigured: make(map[string]bool),
 	}
 
-	cache, err := newAsgCache()
-	if err != nil {
-		return nil, err
-	}
-	manager.asgCache = cache
+	manager.azCache = NewAzureCache()
 
 	specs, err := parseLabelAutoDiscoverySpecs(discoveryOpts)
 	if err != nil {
@@ -158,7 +154,7 @@ func (m *AzureManager) fetchExplicitAsgs(specs []string) error {
 	}
 
 	if changed {
-		if err := m.regenerateCache(); err != nil {
+		if err := m.azCache.RegenerateInstanceCache(); err != nil {
 			return err
 		}
 	}
@@ -202,8 +198,8 @@ func (m *AzureManager) forceRefresh() error {
 	if err := m.fetchAutoAsgs(); err != nil {
 		klog.Errorf("Failed to fetch ASGs: %v", err)
 	}
-	if err := m.regenerateCache(); err != nil {
-		klog.Errorf("Failed to regenerate ASG cache: %v", err)
+	if err := m.azCache.RegenerateInstanceCache(); err != nil {
+		klog.Errorf("Failed to regenerate cache: %v", err)
 		return err
 	}
 	m.lastRefresh = time.Now()
@@ -237,7 +233,7 @@ func (m *AzureManager) fetchAutoAsgs() error {
 		}
 	}
 
-	for _, asg := range m.getAsgs() {
+	for _, asg := range m.azCache.getNodeGroups() {
 		asgID := asg.Id()
 		if !exists[asgID] && !m.explicitlyConfigured[asgID] {
 			m.UnregisterAsg(asg)
@@ -246,7 +242,7 @@ func (m *AzureManager) fetchAutoAsgs() error {
 	}
 
 	if changed {
-		if err := m.regenerateCache(); err != nil {
+		if err := m.azCache.RegenerateInstanceCache(); err != nil {
 			return err
 		}
 	}
@@ -254,34 +250,24 @@ func (m *AzureManager) fetchAutoAsgs() error {
 	return nil
 }
 
-func (m *AzureManager) getAsgs() []cloudprovider.NodeGroup {
-	return m.asgCache.get()
-}
-
 // RegisterAsg registers an ASG.
 func (m *AzureManager) RegisterAsg(asg cloudprovider.NodeGroup) bool {
-	return m.asgCache.Register(asg)
+	return m.azCache.Register(asg)
 }
 
 // UnregisterAsg unregisters an ASG.
 func (m *AzureManager) UnregisterAsg(asg cloudprovider.NodeGroup) bool {
-	return m.asgCache.Unregister(asg)
+	return m.azCache.Unregister(asg)
 }
 
 // GetAsgForInstance returns AsgConfig of the given Instance
 func (m *AzureManager) GetAsgForInstance(instance *azureRef) (cloudprovider.NodeGroup, error) {
-	return m.asgCache.FindForInstance(instance, m.config.VMType)
-}
-
-func (m *AzureManager) regenerateCache() error {
-	m.asgCache.mutex.Lock()
-	defer m.asgCache.mutex.Unlock()
-	return m.asgCache.regenerate()
+	return m.azCache.GetNodeGroupForInstance(instance, m.config.VMType)
 }
 
 // Cleanup the ASG cache.
 func (m *AzureManager) Cleanup() {
-	m.asgCache.Cleanup()
+	m.azCache.Cleanup()
 }
 
 func (m *AzureManager) getFilteredAutoscalingGroups(filter []labelAutoDiscoveryConfig) (asgs []cloudprovider.NodeGroup, err error) {

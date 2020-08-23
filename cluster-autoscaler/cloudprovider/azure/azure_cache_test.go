@@ -19,8 +19,6 @@ package azure
 import (
 	"testing"
 
-	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
-
 	"github.com/stretchr/testify/assert"
 )
 
@@ -28,9 +26,8 @@ func TestRegister(t *testing.T) {
 	provider := newTestProvider(t)
 	ss := newTestScaleSet(provider.azureManager, "ss")
 
-	ac, err := newAsgCache()
-	assert.NoError(t, err)
-	ac.registeredAsgs = []cloudprovider.NodeGroup{ss}
+	ac := NewAzureCache()
+	ac.registeredNodeGroups[azureRef{Name: "ss"}] = ss
 
 	isSuccess := ac.Register(ss)
 	assert.False(t, isSuccess)
@@ -46,29 +43,29 @@ func TestUnRegister(t *testing.T) {
 	ss := newTestScaleSet(provider.azureManager, "ss")
 	ss1 := newTestScaleSet(provider.azureManager, "ss1")
 
-	ac, err := newAsgCache()
-	assert.NoError(t, err)
-	ac.registeredAsgs = []cloudprovider.NodeGroup{ss, ss1}
+	ac := NewAzureCache()
+	ac.registeredNodeGroups[azureRef{Name: "ss"}] = ss
+	ac.registeredNodeGroups[azureRef{Name: "ss1"}] = ss1
 
 	isSuccess := ac.Unregister(ss)
 	assert.True(t, isSuccess)
-	assert.Equal(t, 1, len(ac.registeredAsgs))
+	assert.Equal(t, 1, len(ac.registeredNodeGroups))
 }
 
 func TestFindForInstance(t *testing.T) {
-	ac, err := newAsgCache()
-	assert.NoError(t, err)
+	ac := NewAzureCache()
 
 	inst := azureRef{Name: "/subscriptions/sub/resourceGroups/rg/providers/foo"}
-	ac.notInRegisteredAsg = make(map[azureRef]bool)
-	ac.notInRegisteredAsg[inst] = true
-	nodeGroup, err := ac.FindForInstance(&inst, vmTypeVMSS)
+	ac.notInRegisteredNodeGroups = make(map[azureRef]struct{})
+	ac.notInRegisteredNodeGroups[inst] = struct{}{}
+	nodeGroup, err := ac.GetNodeGroupForInstance(&inst, vmTypeVMSS)
 	assert.Nil(t, nodeGroup)
 	assert.NoError(t, err)
 
-	ac.notInRegisteredAsg[inst] = false
-	nodeGroup, err = ac.FindForInstance(&inst, vmTypeStandard)
+	delete(ac.notInRegisteredNodeGroups, inst)
+	nodeGroup, err = ac.GetNodeGroupForInstance(&inst, vmTypeStandard)
 	assert.Nil(t, nodeGroup)
 	assert.NoError(t, err)
-	assert.True(t, ac.notInRegisteredAsg[inst])
+	_, found := ac.notInRegisteredNodeGroups[inst]
+	assert.False(t, found)
 }
