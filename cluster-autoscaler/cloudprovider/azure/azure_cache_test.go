@@ -27,7 +27,7 @@ func TestRegister(t *testing.T) {
 	ss := newTestScaleSet(provider.azureManager, "ss")
 
 	ac := NewAzureCache()
-	ac.registeredNodeGroups[azureRef{Name: "ss"}] = ss
+	ac.registeredNodeGroups[AzureRef{Name: "ss"}] = ss
 
 	isSuccess := ac.Register(ss)
 	assert.False(t, isSuccess)
@@ -44,8 +44,8 @@ func TestUnRegister(t *testing.T) {
 	ss1 := newTestScaleSet(provider.azureManager, "ss1")
 
 	ac := NewAzureCache()
-	ac.registeredNodeGroups[azureRef{Name: "ss"}] = ss
-	ac.registeredNodeGroups[azureRef{Name: "ss1"}] = ss1
+	ac.registeredNodeGroups[AzureRef{Name: "ss"}] = ss
+	ac.registeredNodeGroups[AzureRef{Name: "ss1"}] = ss1
 
 	isSuccess := ac.Unregister(ss)
 	assert.True(t, isSuccess)
@@ -55,8 +55,8 @@ func TestUnRegister(t *testing.T) {
 func TestFindForInstance(t *testing.T) {
 	ac := NewAzureCache()
 
-	inst := azureRef{Name: "/subscriptions/sub/resourceGroups/rg/providers/foo"}
-	ac.notInRegisteredNodeGroups = make(map[azureRef]struct{})
+	inst := AzureRef{Name: "/subscriptions/sub/resourceGroups/rg/providers/foo"}
+	ac.notInRegisteredNodeGroups = make(map[AzureRef]struct{})
 	ac.notInRegisteredNodeGroups[inst] = struct{}{}
 	nodeGroup, err := ac.GetNodeGroupForInstance(&inst, vmTypeVMSS)
 	assert.Nil(t, nodeGroup)

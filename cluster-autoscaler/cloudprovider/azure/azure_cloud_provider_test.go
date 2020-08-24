@@ -135,7 +135,9 @@ func TestNodeGroupForNode(t *testing.T) {
 		},
 	}
 	// refresh cache
-	provider.azureManager.regenerateCache()
+	err := provider.azureManager.azCache.RegenerateInstanceCache()
+	assert.NoError(t, err)
+
 	group, err := provider.NodeGroupForNode(node)
 	assert.NoError(t, err)
 	assert.NotNil(t, group, "Group should not be nil")

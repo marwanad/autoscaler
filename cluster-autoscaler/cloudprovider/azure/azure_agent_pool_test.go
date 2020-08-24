@@ -51,7 +51,7 @@ func newTestAgentPool(manager *AzureManager, name string) *AgentPool {
 	virtualMachinesStatusCache.lastRefresh = make(map[string]time.Time)
 
 	return &AgentPool{
-		azureRef: azureRef{
+		azureRef: AzureRef{
 			Name: name,
 		},
 		manager:    manager,
@@ -357,7 +357,7 @@ func TestAgentPoolBelongs(t *testing.T) {
 	defer ctrl.Finish()
 
 	as := newTestAgentPool(newTestAzureManager(t), "as")
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as
 
 	flag, err := as.Belongs(&apiv1.Node{Spec: apiv1.NodeSpec{ProviderID: testValidProviderID0}})
 	assert.NoError(t, err)
@@ -372,7 +372,7 @@ func TestAgentPoolBelongs(t *testing.T) {
 	assert.False(t, flag)
 
 	as1 := newTestAgentPool(newTestAzureManager(t), "as1")
-	as1.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as
+	as1.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as
 	flag, err = as1.Belongs(&apiv1.Node{Spec: apiv1.NodeSpec{ProviderID: testValidProviderID0}})
 	assert.NoError(t, err)
 	assert.False(t, flag)
@@ -384,9 +384,9 @@ func TestDeleteInstances(t *testing.T) {
 
 	as := newTestAgentPool(newTestAzureManager(t), "as")
 	as1 := newTestAgentPool(newTestAzureManager(t), "as1")
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID1}] = as1
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testInvalidProviderID}] = as
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID1}] = as1
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testInvalidProviderID}] = as
 
 	mockVMClient := mockvmclient.NewMockInterface(ctrl)
 	as.manager.azClient.virtualMachinesClient = mockVMClient
@@ -394,31 +394,31 @@ func TestDeleteInstances(t *testing.T) {
 	mockSAClient := mockstorageaccountclient.NewMockInterface(ctrl)
 	as.manager.azClient.storageAccountsClient = mockSAClient
 
-	err := as.DeleteInstances([]*azureRef{})
+	err := as.DeleteInstances([]*AzureRef{})
 	assert.NoError(t, err)
 
-	instances := []*azureRef{
+	instances := []*AzureRef{
 		{Name: "foo"},
 	}
 	err = as.DeleteInstances(instances)
 	expectedErr := fmt.Errorf("\"foo\" isn't in Azure resource ID format")
 	assert.Equal(t, expectedErr, err)
 
-	instances = []*azureRef{
+	instances = []*AzureRef{
 		{Name: testValidProviderID0},
 		{Name: "foo"},
 	}
 	err = as.DeleteInstances(instances)
 	assert.Equal(t, expectedErr, err)
 
-	instances = []*azureRef{
+	instances = []*AzureRef{
 		{Name: testInvalidProviderID},
 	}
 	err = as.DeleteInstances(instances)
 	expectedErr = fmt.Errorf("resource name was missing from identifier")
 	assert.Equal(t, expectedErr, err)
 
-	instances = []*azureRef{
+	instances = []*AzureRef{
 		{Name: testValidProviderID0},
 		{Name: testValidProviderID1},
 	}
@@ -427,7 +427,7 @@ func TestDeleteInstances(t *testing.T) {
 	expectedErr = fmt.Errorf("cannot delete instance (%s) which don't belong to the same node pool (\"as\")", testValidProviderID1)
 	assert.Equal(t, expectedErr, err)
 
-	instances = []*azureRef{
+	instances = []*AzureRef{
 		{Name: testValidProviderID0},
 	}
 	mockVMClient.EXPECT().Get(gomock.Any(), as.manager.config.ResourceGroup, "as-vm-0", gomock.Any()).Return(getExpectedVMs()[0], nil)
@@ -447,7 +447,7 @@ func TestAgentPoolDeleteNodes(t *testing.T) {
 	defer ctrl.Finish()
 
 	as := newTestAgentPool(newTestAzureManager(t), "as")
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as
 	expectedVMs := getExpectedVMs()
 	mockVMClient := mockvmclient.NewMockInterface(ctrl)
 	as.manager.azClient.virtualMachinesClient = mockVMClient
@@ -470,7 +470,7 @@ func TestAgentPoolDeleteNodes(t *testing.T) {
 	assert.Equal(t, expectedErr, err)
 
 	as1 := newTestAgentPool(newTestAzureManager(t), "as1")
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as1
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as1
 	err = as.DeleteNodes([]*apiv1.Node{
 		{
 			Spec:       apiv1.NodeSpec{ProviderID: testValidProviderID0},
@@ -480,7 +480,7 @@ func TestAgentPoolDeleteNodes(t *testing.T) {
 	expectedErr = fmt.Errorf("node belongs to a different asg than as")
 	assert.Equal(t, expectedErr, err)
 
-	as.manager.azCache.instanceToNodeGroup[azureRef{Name: testValidProviderID0}] = as
+	as.manager.azCache.instanceToNodeGroup[AzureRef{Name: testValidProviderID0}] = as
 	mockVMClient.EXPECT().Get(gomock.Any(), as.manager.config.ResourceGroup, "as-vm-0", gomock.Any()).Return(getExpectedVMs()[0], nil)
 	mockVMClient.EXPECT().Delete(gomock.Any(), as.manager.config.ResourceGroup, "as-vm-0").Return(nil)
 	mockSAClient.EXPECT().ListKeys(gomock.Any(), as.manager.config.ResourceGroup, "foo").Return(storage.AccountListKeysResult{

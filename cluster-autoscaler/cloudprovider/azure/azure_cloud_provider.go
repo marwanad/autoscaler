@@ -82,7 +82,7 @@ func (azure *AzureCloudProvider) GetAvailableGPUTypes() map[string]struct{} {
 
 // NodeGroups returns all node groups configured for this cloud provider.
 func (azure *AzureCloudProvider) NodeGroups() []cloudprovider.NodeGroup {
-	asgs := azure.azureManager.getAsgs()
+	asgs := azure.azureManager.azCache.getNodeGroups()
 
 	ngs := make([]cloudprovider.NodeGroup, len(asgs))
 	for i, asg := range asgs {
@@ -99,7 +99,7 @@ func (azure *AzureCloudProvider) NodeGroupForNode(node *apiv1.Node) (cloudprovid
 		return nil, nil
 	}
 	klog.V(6).Infof("Searching for node group for the node: %s\n", node.Spec.ProviderID)
-	ref := &azureRef{
+	ref := &AzureRef{
 		Name: node.Spec.ProviderID,
 	}
 
@@ -135,18 +135,23 @@ func (azure *AzureCloudProvider) Refresh() error {
 	return azure.azureManager.Refresh()
 }
 
-// azureRef contains a reference to some entity in Azure world.
-type azureRef struct {
+type AzureNodeGroup interface {
+	AzureRef() AzureRef
+	cloudprovider.NodeGroup
+}
+
+// AzureRef contains a reference to some entity in Azure world.
+type AzureRef struct {
 	Name string
 }
 
 // GetKey returns key of the given azure reference.
-func (m *azureRef) GetKey() string {
+func (m *AzureRef) GetKey() string {
 	return m.Name
 }
 
 // String is represented by calling GetKey()
-func (m *azureRef) String() string {
+func (m *AzureRef) String() string {
 	return m.GetKey()
 }
 

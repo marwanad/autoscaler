@@ -46,7 +46,7 @@ var (
 
 func getTestAKSPool(manager *AzureManager, name string) *AKSAgentPool {
 	return &AKSAgentPool{
-		azureRef: azureRef{
+		azureRef: AzureRef{
 			Name: name,
 		},
 		manager:           manager,

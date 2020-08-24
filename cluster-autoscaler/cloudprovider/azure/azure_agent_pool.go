@@ -52,7 +52,7 @@ var virtualMachinesStatusCache struct {
 
 // AgentPool implements NodeGroup interface for agent pools deployed by aks-engine.
 type AgentPool struct {
-	azureRef
+	azureRef AzureRef
 	manager *AzureManager
 
 	minSize int
@@ -69,7 +69,7 @@ type AgentPool struct {
 // NewAgentPool creates a new AgentPool.
 func NewAgentPool(spec *dynamic.NodeGroupSpec, az *AzureManager) (*AgentPool, error) {
 	as := &AgentPool{
-		azureRef: azureRef{
+		azureRef: AzureRef{
 			Name: spec.Name,
 		},
 		minSize: spec.MinSize,
@@ -214,12 +214,12 @@ func (as *AgentPool) getCurSize() (int64, error) {
 		return as.curSize, nil
 	}
 
-	klog.V(5).Infof("Get agent pool size for %q", as.Name)
+	klog.V(5).Infof("Get agent pool size for %q", as.AzureRef().Name)
 	indexes, _, err := as.GetVMIndexes()
 	if err != nil {
 		return 0, err
 	}
-	klog.V(5).Infof("Returning agent pool (%q) size: %d\n", as.Name, len(indexes))
+	klog.V(5).Infof("Returning agent pool (%q) size: %d\n", as.AzureRef().Name, len(indexes))
 
 	if as.curSize != int64(len(indexes)) {
 		klog.V(6).Infof("getCurSize:as.curSize(%d) != real size (%d), invalidating vm cache", as.curSize, len(indexes))
@@ -304,7 +304,7 @@ func (as *AgentPool) IncreaseSize(delta int) error {
 	defer as.mutex.Unlock()
 
 	if as.curSize == -1 {
-		return fmt.Errorf("the availability set %s is under initialization, skipping IncreaseSize", as.Name)
+		return fmt.Errorf("the availability set %s is under initialization, skipping IncreaseSize", as.AzureRef().Name)
 	}
 
 	if delta <= 0 {
@@ -335,8 +335,8 @@ func (as *AgentPool) IncreaseSize(delta int) error {
 	if highestUsedIndex != 0 {
 		countForTemplate += highestUsedIndex + 1 - curSize
 	}
-	as.parameters[as.Name+"Count"] = map[string]int{"value": countForTemplate}
-	as.parameters[as.Name+"Offset"] = map[string]int{"value": highestUsedIndex + 1}
+	as.parameters[as.AzureRef().Name+"Count"] = map[string]int{"value": countForTemplate}
+	as.parameters[as.AzureRef().Name+"Offset"] = map[string]int{"value": highestUsedIndex + 1}
 
 	newDeploymentName := fmt.Sprintf("cluster-autoscaler-%d", rand.New(rand.NewSource(time.Now().UnixNano())).Int31())
 	newDeployment := resources.Deployment{
@@ -423,7 +423,7 @@ func (as *AgentPool) DecreaseTargetSize(delta int) error {
 func (as *AgentPool) Belongs(node *apiv1.Node) (bool, error) {
 	klog.V(6).Infof("Check if node belongs to this agent pool: AgentPool:%v, node:%v\n", as, node)
 
-	ref := &azureRef{
+	ref := &AzureRef{
 		Name: node.Spec.ProviderID,
 	}
 
@@ -441,7 +441,7 @@ func (as *AgentPool) Belongs(node *apiv1.Node) (bool, error) {
 }
 
 // DeleteInstances deletes the given instances. All instances must be controlled by the same ASG.
-func (as *AgentPool) DeleteInstances(instances []*azureRef) error {
+func (as *AgentPool) DeleteInstances(instances []*AzureRef) error {
 	if len(instances) == 0 {
 		return nil
 	}
@@ -493,7 +493,7 @@ func (as *AgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 		return fmt.Errorf("min size reached, nodes will not be deleted")
 	}
 
-	refs := make([]*azureRef, 0, len(nodes))
+	refs := make([]*AzureRef, 0, len(nodes))
 	for _, node := range nodes {
 		belongs, err := as.Belongs(node)
 		if err != nil {
@@ -504,7 +504,7 @@ func (as *AgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 			return fmt.Errorf("%s belongs to a different asg than %s", node.Name, as.Id())
 		}
 
-		ref := &azureRef{
+		ref := &AzureRef{
 			Name: node.Spec.ProviderID,
 		}
 		refs = append(refs, ref)
@@ -520,7 +520,7 @@ func (as *AgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 
 // Id returns AgentPool id.
 func (as *AgentPool) Id() string {
-	return as.Name
+	return as.AzureRef().Name
 }
 
 // Debug returns a debug string for the agent pool.
@@ -676,7 +676,7 @@ func (as *AgentPool) deleteVirtualMachine(name string) error {
 	return nil
 }
 
-// getAzureRef gets AzureRef for the as.
-func (as *AgentPool) getAzureRef() azureRef {
+// AzureRef gets AzureRef for the as.
+func (as *AgentPool) AzureRef() AzureRef {
 	return as.azureRef
 }

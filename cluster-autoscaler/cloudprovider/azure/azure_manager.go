@@ -48,7 +48,8 @@ type AzureManager struct {
 	azClient *azClient
 	env      azure.Environment
 
-	azCache               *azureCache
+	azCache               *AzureCache
+	azCacheHelper 		  AzCacheHelper
 	lastRefresh           time.Time
 	asgAutoDiscoverySpecs []labelAutoDiscoveryConfig
 	explicitlyConfigured  map[string]bool
@@ -87,6 +88,7 @@ func CreateAzureManager(configReader io.Reader, discoveryOpts cloudprovider.Node
 	}
 
 	manager.azCache = NewAzureCache()
+	manager.azCacheHelper = NewAzCacheHelper(manager.azCache, cfg, azClient)
 
 	specs, err := ParseLabelAutoDiscoverySpecs(discoveryOpts)
 	if err != nil {
@@ -126,7 +128,7 @@ func (m *AzureManager) fetchExplicitAsgs(specs []string) error {
 	return nil
 }
 
-func (m *AzureManager) buildAsgFromSpec(spec string) (cloudprovider.NodeGroup, error) {
+func (m *AzureManager) buildAsgFromSpec(spec string) (AzureNodeGroup, error) {
 	scaleToZeroSupported := scaleToZeroSupportedStandard
 	if strings.EqualFold(m.config.VMType, vmTypeVMSS) {
 		scaleToZeroSupported = scaleToZeroSupportedVMSS
@@ -216,17 +218,17 @@ func (m *AzureManager) fetchAutoAsgs() error {
 }
 
 // RegisterAsg registers an ASG.
-func (m *AzureManager) RegisterAsg(asg cloudprovider.NodeGroup) bool {
-	return m.azCache.Register(asg)
+func (m *AzureManager) RegisterAsg(ng AzureNodeGroup) bool {
+	return m.azCache.Register(ng)
 }
 
 // UnregisterAsg unregisters an ASG.
-func (m *AzureManager) UnregisterAsg(asg cloudprovider.NodeGroup) bool {
-	return m.azCache.Unregister(asg)
+func (m *AzureManager) UnregisterAsg(ng AzureNodeGroup) bool {
+	return m.azCache.Unregister(ng)
 }
 
 // GetAsgForInstance returns AsgConfig of the given Instance
-func (m *AzureManager) GetAsgForInstance(instance *azureRef) (cloudprovider.NodeGroup, error) {
+func (m *AzureManager) GetAsgForInstance(instance *AzureRef) (AzureNodeGroup, error) {
 	return m.azCache.GetNodeGroupForInstance(instance, m.config.VMType)
 }
 
@@ -235,7 +237,7 @@ func (m *AzureManager) Cleanup() {
 	m.azCache.Cleanup()
 }
 
-func (m *AzureManager) getFilteredAutoscalingGroups(filter []labelAutoDiscoveryConfig) (asgs []cloudprovider.NodeGroup, err error) {
+func (m *AzureManager) getFilteredAutoscalingGroups(filter []labelAutoDiscoveryConfig) (asgs []AzureNodeGroup, err error) {
 	if len(filter) == 0 {
 		return nil, nil
 	}
@@ -244,11 +246,11 @@ func (m *AzureManager) getFilteredAutoscalingGroups(filter []labelAutoDiscoveryC
 		return m.listScaleSets(filter)
 	}
 
-	return nil, fmt.Errorf("vmType %q doest not support autodiscovery", m.config.VMType)
+	return nil, fmt.Errorf("vmType %q does not support autodiscovery", m.config.VMType)
 }
 
 // listScaleSets gets a list of scale sets and instanceIDs.
-func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]cloudprovider.NodeGroup, error) {
+func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]AzureNodeGroup, error) {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
 
@@ -258,7 +260,7 @@ func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]cloud
 		return nil, rerr.Error()
 	}
 
-	var asgs []cloudprovider.NodeGroup
+	var asgs []AzureNodeGroup
 	for _, scaleSet := range result {
 		if len(filter) > 0 {
 			if scaleSet.Tags == nil || len(scaleSet.Tags) == 0 {
@@ -323,3 +325,8 @@ func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]cloud
 	return asgs, nil
 }
 
+
+// GetNodeGroupSize returns the node group size
+func(m *AzureManager) GetNodeGroupSize(ng AzureNodeGroup) (int64, error) {
+	return m.azCacheHelper.GetNodeGroupTargetSize(ng)
+}

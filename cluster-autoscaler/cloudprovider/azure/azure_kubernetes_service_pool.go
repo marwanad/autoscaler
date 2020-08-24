@@ -33,7 +33,7 @@ import (
 
 //AKSAgentPool implements NodeGroup interface for agent pool deployed in AKS
 type AKSAgentPool struct {
-	azureRef
+	azureRef AzureRef
 	manager *AzureManager
 	util    *AzUtil
 
@@ -52,7 +52,7 @@ type AKSAgentPool struct {
 //and azure manager
 func NewAKSAgentPool(spec *dynamic.NodeGroupSpec, am *AzureManager) (*AKSAgentPool, error) {
 	asg := &AKSAgentPool{
-		azureRef: azureRef{
+		azureRef: AzureRef{
 			Name: spec.Name,
 		},
 		minSize: spec.MinSize,
@@ -77,7 +77,7 @@ func (agentPool *AKSAgentPool) GetAKSAgentPool(agentProfiles *[]containerservice
 	for _, value := range *agentProfiles {
 		profileName := *value.Name
 		klog.V(5).Infof("AKS AgentPool profile name: %s", profileName)
-		if strings.EqualFold(profileName, agentPool.azureRef.Name) {
+		if strings.EqualFold(profileName, agentPool.AzureRef().Name) {
 			return &value
 		}
 	}
@@ -100,7 +100,7 @@ func (agentPool *AKSAgentPool) getAKSNodeCount() (count int, err error) {
 
 	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
 	if pool == nil {
-		return -1, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
+		return -1, fmt.Errorf("could not find pool with name: %s", agentPool.AzureRef().Name)
 	}
 
 	if pool.Count != nil {
@@ -125,7 +125,7 @@ func (agentPool *AKSAgentPool) setAKSNodeCount(count int) error {
 
 	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
 	if pool == nil {
-		return fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
+		return fmt.Errorf("could not find pool with name: %s", agentPool.AzureRef().Name)
 	}
 
 	klog.Infof("Current size: %d, Target size requested: %d", *pool.Count, count)
@@ -208,7 +208,7 @@ func (agentPool *AKSAgentPool) TargetSize() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	klog.V(5).Infof("Got new size %d for agent pool (%q)", count, agentPool.Name)
+	klog.V(5).Infof("Got new size %d for agent pool (%q)", count, agentPool.AzureRef().Name)
 
 	agentPool.curSize = count
 	agentPool.lastRefresh = time.Now()
@@ -304,9 +304,9 @@ func (agentPool *AKSAgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 		targetSize := agentPool.curSize - deleted
 		err := agentPool.setSizeInternal(targetSize, true)
 		if err != nil {
-			klog.Errorf("Failed to set size for agent pool %q with error: %v", agentPool.Name, err)
+			klog.Errorf("Failed to set size for agent pool %q with error: %v", agentPool.AzureRef().Name, err)
 		} else {
-			klog.V(3).Infof("Size for agent pool %q has been updated to %d", agentPool.Name, targetSize)
+			klog.V(3).Infof("Size for agent pool %q has been updated to %d", agentPool.AzureRef().Name, targetSize)
 		}
 	}
 	return deleteError
@@ -316,8 +316,8 @@ func (agentPool *AKSAgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 func (agentPool *AKSAgentPool) IsAKSNode(tags map[string]*string) bool {
 	poolName := tags["poolName"]
 	if poolName != nil {
-		klog.V(5).Infof("Matching agentPool name: %s with tag name: %s", agentPool.azureRef.Name, *poolName)
-		if strings.EqualFold(*poolName, agentPool.azureRef.Name) {
+		klog.V(5).Infof("Matching agentPool name: %s with tag name: %s", agentPool.AzureRef().Name, *poolName)
+		if strings.EqualFold(*poolName, agentPool.AzureRef().Name) {
 			return true
 		}
 	}
@@ -365,7 +365,7 @@ func (agentPool *AKSAgentPool) DecreaseTargetSize(delta int) error {
 		klog.Error(err)
 		return err
 	}
-	klog.V(5).Infof("DecreaseTargetSize get current size %d for agent pool %q", currentSize, agentPool.Name)
+	klog.V(5).Infof("DecreaseTargetSize get current size %d for agent pool %q", currentSize, agentPool.AzureRef().Name)
 
 	// Get the current nodes in the list
 	nodes, err := agentPool.GetNodes()
@@ -375,7 +375,7 @@ func (agentPool *AKSAgentPool) DecreaseTargetSize(delta int) error {
 	}
 
 	targetSize := currentSize + delta
-	klog.V(5).Infof("DecreaseTargetSize get target size %d for agent pool %q", targetSize, agentPool.Name)
+	klog.V(5).Infof("DecreaseTargetSize get target size %d for agent pool %q", targetSize, agentPool.AzureRef().Name)
 	if targetSize < len(nodes) {
 		return fmt.Errorf("attempt to delete existing nodes targetSize:%d delta:%d existingNodes: %d",
 			currentSize, delta, len(nodes))
@@ -385,7 +385,7 @@ func (agentPool *AKSAgentPool) DecreaseTargetSize(delta int) error {
 
 //Id returns the name of the agentPool
 func (agentPool *AKSAgentPool) Id() string {
-	return agentPool.azureRef.Name
+	return agentPool.AzureRef().Name
 }
 
 //Debug returns a string with basic details of the agentPool
@@ -432,4 +432,9 @@ func (agentPool *AKSAgentPool) Delete() error {
 //does not create agentPools by itself.
 func (agentPool *AKSAgentPool) Autoprovisioned() bool {
 	return false
+}
+
+// AzureRef gets AzureRef for the as.
+func (agentPool *AKSAgentPool) AzureRef() AzureRef {
+	return agentPool.azureRef
 }

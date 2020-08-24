@@ -19,35 +19,36 @@ package azure
 import (
 	"sync"
 
-	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	klog "k8s.io/klog/v2"
 )
 
 
-type azureCache struct {
-	registeredNodeGroups      map[azureRef]cloudprovider.NodeGroup
-	instanceToNodeGroup       map[azureRef]cloudprovider.NodeGroup
-	notInRegisteredNodeGroups map[azureRef]struct{}
+type AzureCache struct {
+	registeredNodeGroups      map[AzureRef]AzureNodeGroup
+	instanceToNodeGroup       map[AzureRef]AzureNodeGroup
+	notInRegisteredNodeGroups map[AzureRef]struct{}
+	nodeGroupTargetSizeCache       map[AzureRef]int64
 	mutex                     sync.Mutex
 	interrupt                 chan struct{}
 }
 
-func NewAzureCache() *azureCache {
-	cache := &azureCache{
-		registeredNodeGroups:      make(map[azureRef]cloudprovider.NodeGroup),
-		instanceToNodeGroup:       make(map[azureRef]cloudprovider.NodeGroup),
-		notInRegisteredNodeGroups: make(map[azureRef]struct{}),
+func NewAzureCache() *AzureCache {
+	cache := &AzureCache{
+		registeredNodeGroups:      make(map[AzureRef]AzureNodeGroup),
+		instanceToNodeGroup:       make(map[AzureRef]AzureNodeGroup),
+		notInRegisteredNodeGroups: make(map[AzureRef]struct{}),
+		nodeGroupTargetSizeCache: make(map[AzureRef]int64),
 		interrupt:                 make(chan struct{}),
 	}
 	return cache
 }
 
 // Register registers a node group if it hasn't been registered or its config has changed
-func (az *azureCache) Register(newNg cloudprovider.NodeGroup) bool {
+func (az *AzureCache) Register(newNg AzureNodeGroup) bool {
 	az.mutex.Lock()
 	defer az.mutex.Unlock()
 
-	newNgAzureRef := azureRef{newNg.Id()}
+	newNgAzureRef := newNg.AzureRef()
 	existing, found := az.registeredNodeGroups[newNgAzureRef]
 	if found {
 		if existing.MinSize() == newNg.MinSize() && existing.MaxSize() == newNg.MaxSize()  {
@@ -64,11 +65,11 @@ func (az *azureCache) Register(newNg cloudprovider.NodeGroup) bool {
 }
 
 // Unregister returns true if the node group has been removed and false otherwise
-func (az *azureCache) Unregister(toUnregister cloudprovider.NodeGroup) bool {
+func (az *AzureCache) Unregister(toUnregister AzureNodeGroup) bool {
 	az.mutex.Lock()
 	defer az.mutex.Unlock()
 
-	toBeRemovedAzureRef:= azureRef{toUnregister.Id()}
+	toBeRemovedAzureRef := toUnregister.AzureRef()
 	_, found := az.registeredNodeGroups[toBeRemovedAzureRef]
 	if found {
 		klog.V(1).Infof("Unregistered node group %q", toBeRemovedAzureRef.String())
@@ -79,11 +80,11 @@ func (az *azureCache) Unregister(toUnregister cloudprovider.NodeGroup) bool {
 	return false
 }
 
-func (az *azureCache) getNodeGroups() []cloudprovider.NodeGroup {
+func (az *AzureCache) getNodeGroups() []AzureNodeGroup {
 	az.mutex.Lock()
 	defer az.mutex.Unlock()
 
-	nodeGroups := make([]cloudprovider.NodeGroup, 0, len(az.registeredNodeGroups))
+	nodeGroups := make([]AzureNodeGroup, 0, len(az.registeredNodeGroups))
 	for _, ng := range az.registeredNodeGroups {
 		nodeGroups = append(nodeGroups, ng)
 	}
@@ -91,7 +92,7 @@ func (az *azureCache) getNodeGroups() []cloudprovider.NodeGroup {
 }
 
 // GetNodeGroupForInstance returns the node group of the given Instance
-func (az *azureCache) GetNodeGroupForInstance(instance *azureRef, vmType string) (cloudprovider.NodeGroup, error) {
+func (az *AzureCache) GetNodeGroupForInstance(instance *AzureRef, vmType string) (AzureNodeGroup, error) {
 	az.mutex.Lock()
 	defer az.mutex.Unlock()
 
@@ -100,7 +101,7 @@ func (az *azureCache) GetNodeGroupForInstance(instance *azureRef, vmType string)
 	if err != nil {
 		return nil, err
 	}
-	inst := azureRef{Name: resourceID}
+	inst := AzureRef{Name: resourceID}
 
 	if _, found := az.notInRegisteredNodeGroups[inst]; found {
 		// We already know we don't own this instance. Return early and avoid
@@ -128,14 +129,14 @@ func (az *azureCache) GetNodeGroupForInstance(instance *azureRef, vmType string)
 	return nil, nil
 }
 
-func (az *azureCache) RegenerateInstanceCache() error {
+func (az *AzureCache) RegenerateInstanceCache() error {
 	az.mutex.Lock()
 	defer az.mutex.Unlock()
 
 	klog.V(4).Infof("RegenerateInstanceCache: regenerating instance cache for all node groups")
 
-	az.instanceToNodeGroup = make(map[azureRef]cloudprovider.NodeGroup)
-	az.notInRegisteredNodeGroups = make(map[azureRef]struct{})
+	az.instanceToNodeGroup = make(map[AzureRef]AzureNodeGroup)
+	az.notInRegisteredNodeGroups = make(map[AzureRef]struct{})
 
 	for ngRef, _ := range az.registeredNodeGroups {
 		err := az.regenerateInstanceCacheForNodeGroupNoLock(ngRef)
@@ -146,7 +147,37 @@ func (az *azureCache) RegenerateInstanceCache() error {
 	return nil
 }
 
-func (az *azureCache) regenerateInstanceCacheForNodeGroupNoLock(ngRef azureRef) error {
+// GetMigTargetSize returns the cached targetSize for a GceRef
+func (az *AzureCache) GetNodeGroupTargetSize(ref AzureRef) (int64, bool) {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
+
+	size, found := az.nodeGroupTargetSizeCache[ref]
+	if found {
+		klog.V(6).Infof("Found target size for node group %q in cache", ref.String())
+	}
+	return size, found
+}
+
+func (az *AzureCache) SetNodeGroupTargetSize(ref AzureRef, size int64) {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
+
+	az.nodeGroupTargetSizeCache[ref] = size
+}
+
+func (az *AzureCache) GetNodeGroups() []AzureNodeGroup {
+	az.mutex.Lock()
+	defer az.mutex.Unlock()
+
+	ngs := make([]AzureNodeGroup, 0, len(az.registeredNodeGroups))
+	for _, ng := range az.registeredNodeGroups {
+		ngs = append(ngs, ng)
+	}
+	return ngs
+}
+
+func (az *AzureCache) regenerateInstanceCacheForNodeGroupNoLock(ngRef AzureRef) error {
 	klog.V(4).Infof("regenerateInstanceCacheForNodeGroupNoLock: regenerating instance cache for node group: %s", ngRef.String())
 	az.removeInstancesForNodegroup(ngRef)
 
@@ -157,14 +188,14 @@ func (az *azureCache) regenerateInstanceCacheForNodeGroupNoLock(ngRef azureRef) 
 	}
 	klog.V(6).Infof("regenerateInstanceCacheForNodeGroupNoLock: found nodes for node group %v: %+v", ng, instances)
 	for _, instance := range instances {
-		ref := azureRef{Name: instance.Id}
+		ref := AzureRef{Name: instance.Id}
 		az.instanceToNodeGroup[ref] = ng
 	}
 
 	return nil
 }
 
-func (az *azureCache) removeInstancesForNodegroup(toBeRemovedRef azureRef) {
+func (az *AzureCache) removeInstancesForNodegroup(toBeRemovedRef AzureRef) {
 	for instanceRef, nodeGroup := range az.instanceToNodeGroup {
 		if toBeRemovedRef.String() == nodeGroup.Id() {
 			delete(az.instanceToNodeGroup, instanceRef)
@@ -174,8 +205,8 @@ func (az *azureCache) removeInstancesForNodegroup(toBeRemovedRef azureRef) {
 }
 
 // Retrieves a node group for a given instance if it exists in the cache
-func (az *azureCache) getNodeGroupFromCacheNoLock(providerID string) cloudprovider.NodeGroup {
-	ng, found := az.instanceToNodeGroup[azureRef{Name: providerID}]
+func (az *AzureCache) getNodeGroupFromCacheNoLock(providerID string) AzureNodeGroup {
+	ng, found := az.instanceToNodeGroup[AzureRef{Name: providerID}]
 	if found {
 		return ng
 	}
@@ -183,6 +214,6 @@ func (az *azureCache) getNodeGroupFromCacheNoLock(providerID string) cloudprovid
 }
 
 // Cleanup closes the channel to signal the go routine to stop that is handling the cache
-func (az *azureCache) Cleanup() {
+func (az *AzureCache) Cleanup() {
 	close(az.interrupt)
 }
