@@ -30,6 +30,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure"
 
 	klog "k8s.io/klog/v2"
+	"k8s.io/legacy-cloud-providers/azure/clients/agentpoolsclient"
 	"k8s.io/legacy-cloud-providers/azure/clients/containerserviceclient"
 	"k8s.io/legacy-cloud-providers/azure/clients/diskclient"
 	"k8s.io/legacy-cloud-providers/azure/clients/interfaceclient"
@@ -148,6 +149,7 @@ type azClient struct {
 	disksClient                     diskclient.Interface
 	storageAccountsClient           storageaccountclient.Interface
 	managedKubernetesServicesClient containerserviceclient.Interface
+	agentPoolsClient                agentpoolsclient.Interface
 }
 
 // newServicePrincipalTokenFromCredentials creates a new ServicePrincipalToken using values of the
