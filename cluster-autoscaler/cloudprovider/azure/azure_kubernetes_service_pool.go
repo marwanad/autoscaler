@@ -409,7 +409,32 @@ func (agentPool *AKSAgentPool) Nodes() ([]cloudprovider.Instance, error) {
 
 //TemplateNodeInfo is not implemented.
 func (agentPool *AKSAgentPool) TemplateNodeInfo() (*schedulerframework.NodeInfo, error) {
-	return nil, cloudprovider.ErrNotImplemented
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+
+	managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
+		agentPool.resourceGroup,
+		agentPool.clusterName)
+	if rerr != nil {
+		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
+		return nil, rerr.Error()
+	}
+
+	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
+	if pool == nil {
+		return nil, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
+	}
+
+	isWindows := strings.EqualFold(string(pool.OsType), "windows")
+
+	node, err := buildNodeFromTemplate(agentPool.azureRef.Name, string(pool.VMSize), *managedCluster.Location, pool.AvailabilityZones, isWindows, pool.Tags)
+	if err != nil {
+		return nil, err
+	}
+
+	nodeInfo := schedulerframework.NewNodeInfo(cloudprovider.BuildKubeProxy(agentPool.azureRef.Name))
+	nodeInfo.SetNode(node)
+	return nodeInfo, nil
 }
 
 //Exist is always true since we are initialized with an existing agentpool

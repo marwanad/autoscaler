@@ -18,7 +18,10 @@ package azure
 
 import (
 	"fmt"
-	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-12-01/compute"
+	"math/rand"
+	"regexp"
+	"strings"
+
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,36 +30,34 @@ import (
 	cloudvolume "k8s.io/cloud-provider/volume"
 	"k8s.io/klog/v2"
 	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
-	"math/rand"
-	"regexp"
-	"strings"
 )
 
-func buildInstanceOS(template compute.VirtualMachineScaleSet) string {
+func buildInstanceOS(windows bool) string {
 	instanceOS := cloudprovider.DefaultOS
-	if template.VirtualMachineProfile != nil && template.VirtualMachineProfile.OsProfile != nil && template.VirtualMachineProfile.OsProfile.WindowsConfiguration != nil {
+	// if template.VirtualMachineProfile != nil && template.VirtualMachineProfile.OsProfile != nil && template.VirtualMachineProfile.OsProfile.WindowsConfiguration != nil {
+	if windows {
 		instanceOS = "windows"
 	}
 
 	return instanceOS
 }
 
-func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string) map[string]string {
+func buildGenericLabels(vmSizeName, nodeName, location string, zones *[]string, windows bool) map[string]string {
 	result := make(map[string]string)
 
 	result[kubeletapis.LabelArch] = cloudprovider.DefaultArch
 	result[apiv1.LabelArchStable] = cloudprovider.DefaultArch
 
-	result[kubeletapis.LabelOS] = buildInstanceOS(template)
-	result[apiv1.LabelOSStable] = buildInstanceOS(template)
+	result[kubeletapis.LabelOS] = buildInstanceOS(windows)
+	result[apiv1.LabelOSStable] = buildInstanceOS(windows)
 
-	result[apiv1.LabelInstanceType] = *template.Sku.Name
-	result[apiv1.LabelZoneRegion] = strings.ToLower(*template.Location)
+	result[apiv1.LabelInstanceType] = vmSizeName
+	result[apiv1.LabelZoneRegion] = strings.ToLower(location)
 
-	if template.Zones != nil && len(*template.Zones) > 0 {
-		failureDomains := make([]string, len(*template.Zones))
-		for k, v := range *template.Zones {
-			failureDomains[k] = strings.ToLower(*template.Location) + "-" + v
+	if zones != nil && len(*zones) > 0 {
+		failureDomains := make([]string, len(*zones))
+		for k, v := range *zones {
+			failureDomains[k] = strings.ToLower(location) + "-" + v
 		}
 
 		result[apiv1.LabelZoneFailureDomain] = strings.Join(failureDomains[:], cloudvolume.LabelMultiZoneDelimiter)
@@ -68,7 +69,7 @@ func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string
 	return result
 }
 
-func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineScaleSet) (*apiv1.Node, error) {
+func buildNodeFromTemplate(scaleSetName, vmSizeName, location string, zones *[]string, windows bool, tags map[string]*string) (*apiv1.Node, error) {
 	node := apiv1.Node{}
 	nodeName := fmt.Sprintf("%s-asg-%d", scaleSetName, rand.Int63())
 
@@ -84,18 +85,18 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 
 	var vmssType *InstanceType
 	for k := range InstanceTypes {
-		if strings.EqualFold(k, *template.Sku.Name) {
+		if strings.EqualFold(k, vmSizeName) {
 			vmssType = InstanceTypes[k]
 			break
 		}
 	}
 
 	promoRe := regexp.MustCompile(`(?i)_promo`)
-	if promoRe.MatchString(*template.Sku.Name) {
+	if promoRe.MatchString(vmSizeName) {
 		if vmssType == nil {
 			// We didn't find an exact match but this is a promo type, check for matching standard
-			klog.V(1).Infof("No exact match found for %s, checking standard types", *template.Sku.Name)
-			skuName := promoRe.ReplaceAllString(*template.Sku.Name, "")
+			klog.V(1).Infof("No exact match found for %s, checking standard types", vmSizeName)
+			skuName := promoRe.ReplaceAllString(vmSizeName, "")
 			for k := range InstanceTypes {
 				if strings.EqualFold(k, skuName) {
 					vmssType = InstanceTypes[k]
@@ -106,14 +107,14 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 	}
 
 	if vmssType == nil {
-		return nil, fmt.Errorf("instance type %q not supported", *template.Sku.Name)
+		return nil, fmt.Errorf("instance type %q not supported", vmSizeName)
 	}
 	node.Status.Capacity[apiv1.ResourcePods] = *resource.NewQuantity(110, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceCPU] = *resource.NewQuantity(vmssType.VCPU, resource.DecimalSI)
 	node.Status.Capacity[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(vmssType.GPU, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceMemory] = *resource.NewQuantity(vmssType.MemoryMb*1024*1024, resource.DecimalSI)
 
-	resourcesFromTags := extractAllocatableResourcesFromScaleSet(template.Tags)
+	resourcesFromTags := extractAllocatableResourcesFromScaleSet(tags)
 	for resourceName, val := range resourcesFromTags {
 		node.Status.Capacity[apiv1.ResourceName(resourceName)] = *val
 	}
@@ -122,8 +123,8 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 	node.Status.Allocatable = node.Status.Capacity
 
 	// NodeLabels
-	if template.Tags != nil {
-		for k, v := range template.Tags {
+	if tags != nil {
+		for k, v := range tags {
 			if v != nil {
 				node.Labels[k] = *v
 			} else {
@@ -134,12 +135,12 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 	}
 
 	// GenericLabels
-	node.Labels = cloudprovider.JoinStringMaps(node.Labels, buildGenericLabels(template, nodeName))
+	node.Labels = cloudprovider.JoinStringMaps(node.Labels, buildGenericLabels(vmSizeName, nodeName, location, zones, windows))
 	// Labels from the Scale Set's Tags
-	node.Labels = cloudprovider.JoinStringMaps(node.Labels, extractLabelsFromScaleSet(template.Tags))
+	node.Labels = cloudprovider.JoinStringMaps(node.Labels, extractLabelsFromScaleSet(tags))
 
 	// Taints from the Scale Set's Tags
-	node.Spec.Taints = extractTaintsFromScaleSet(template.Tags)
+	node.Spec.Taints = extractTaintsFromScaleSet(tags)
 
 	node.Status.Conditions = cloudprovider.BuildReadyConditions()
 	return &node, nil

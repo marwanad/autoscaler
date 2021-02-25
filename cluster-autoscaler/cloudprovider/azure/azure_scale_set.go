@@ -468,7 +468,9 @@ func (scaleSet *ScaleSet) TemplateNodeInfo() (*schedulerframework.NodeInfo, erro
 		return nil, rerr.Error()
 	}
 
-	node, err := buildNodeFromTemplate(scaleSet.Name, template)
+	isWindows := template.VirtualMachineProfile != nil && template.VirtualMachineProfile.OsProfile != nil && template.VirtualMachineProfile.OsProfile.WindowsConfiguration != nil
+
+	node, err := buildNodeFromTemplate(scaleSet.Name, *template.Sku.Name, *template.Location, template.Zones, isWindows, template.Tags)
 	if err != nil {
 		return nil, err
 	}
