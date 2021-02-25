@@ -43,6 +43,7 @@ type AKSAgentPool struct {
 	clusterName       string
 	resourceGroup     string
 	nodeResourceGroup string
+	exists            bool
 
 	curSize     int
 	lastRefresh time.Time
@@ -51,7 +52,7 @@ type AKSAgentPool struct {
 
 //NewAKSAgentPool constructs AKSAgentPool from the --node param
 //and azure manager
-func NewAKSAgentPool(spec *dynamic.NodeGroupSpec, am *AzureManager) (*AKSAgentPool, error) {
+func NewAKSAgentPool(spec *dynamic.NodeGroupSpec, am *AzureManager, exists bool) (*AKSAgentPool, error) {
 	asg := &AKSAgentPool{
 		azureRef: azureRef{
 			Name: spec.Name,
@@ -60,6 +61,7 @@ func NewAKSAgentPool(spec *dynamic.NodeGroupSpec, am *AzureManager) (*AKSAgentPo
 		maxSize: spec.MaxSize,
 		manager: am,
 		curSize: -1,
+		exists:  exists,
 	}
 
 	asg.util = &AzUtil{
@@ -439,7 +441,7 @@ func (agentPool *AKSAgentPool) TemplateNodeInfo() (*schedulerframework.NodeInfo,
 
 //Exist is always true since we are initialized with an existing agentpool
 func (agentPool *AKSAgentPool) Exist() bool {
-	return true
+	return agentPool.exists
 }
 
 //Create is returns already exists since we don't support the

@@ -153,7 +153,7 @@ func (m *AzureManager) buildNodeGroupFromSpec(spec string) (cloudprovider.NodeGr
 	case vmTypeVMSS:
 		return NewScaleSet(s, m, -1)
 	case vmTypeAKS:
-		return NewAKSAgentPool(s, m)
+		return NewAKSAgentPool(s, m, true)
 	default:
 		return nil, fmt.Errorf("vmtype %s not supported", m.config.VMType)
 	}
