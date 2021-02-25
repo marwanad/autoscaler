@@ -55,7 +55,7 @@ type AutoscalingProcessors struct {
 func DefaultProcessors() *AutoscalingProcessors {
 	return &AutoscalingProcessors{
 		PodListProcessor:           pods.NewDefaultPodListProcessor(),
-		NodeGroupListProcessor:     nodegroups.NewDefaultNodeGroupListProcessor(),
+		NodeGroupListProcessor:     nodegroups.NewAutoprovisioningNodeGroupListProcessor(),
 		NodeGroupSetProcessor:      nodegroupset.NewDefaultNodeGroupSetProcessor([]string{}),
 		ScaleUpStatusProcessor:     status.NewDefaultScaleUpStatusProcessor(),
 		ScaleDownNodeProcessor:     nodes.NewPreFilteringScaleDownNodeProcessor(),

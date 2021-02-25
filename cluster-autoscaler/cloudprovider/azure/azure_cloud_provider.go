@@ -112,7 +112,11 @@ func (azure *AzureCloudProvider) Pricing() (cloudprovider.PricingModel, errors.A
 
 // GetAvailableMachineTypes get all machine types that can be requested from the cloud provider.
 func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
-	return []string{}, nil
+	names := make([]string, 0, len(InstanceTypes))
+	for name := range InstanceTypes {
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 // NewNodeGroup builds a theoretical node group based on the node definition provided. The node group is not automatically
