@@ -18,8 +18,6 @@ package azure
 
 import (
 	"fmt"
-	"hash/fnv"
-	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -109,24 +107,26 @@ func (agentPool *AKSAgentPool) GetAKSAgentPool(agentProfiles *[]containerservice
 
 // getAKSNodeCount gets node count for AKS agent pool.
 func (agentPool *AKSAgentPool) getAKSNodeCount() (count int, err error) {
-	ctx, cancel := getContextWithCancel()
-	defer cancel()
+	if agentPool.exists {
+		ctx, cancel := getContextWithCancel()
+		defer cancel()
 
-	managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
-		agentPool.resourceGroup,
-		agentPool.clusterName)
-	if rerr != nil {
-		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
-		return -1, rerr.Error()
-	}
+		managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
+			agentPool.resourceGroup,
+			agentPool.clusterName)
+		if rerr != nil {
+			klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
+			return -1, rerr.Error()
+		}
 
-	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
-	if pool == nil {
-		return -1, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
-	}
+		pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
+		if pool == nil {
+			return -1, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
+		}
 
-	if pool.Count != nil {
-		return int(*pool.Count), nil
+		if pool.Count != nil {
+			return int(*pool.Count), nil
+		}
 	}
 
 	return 0, nil
@@ -513,12 +513,12 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 
 		// TODO(ace): HACK DUE TO KNOWLEDGE OF AKS IMPLEMENTATION
 		// hasn't changed in years though.
-		uniqueNameSuffixSize := 8
-		h := fnv.New64a()
-		h.Write([]byte(*managedCluster.Fqdn))
-		r := rand.New(rand.NewSource(int64(h.Sum64())))
-		clusterID := fmt.Sprintf("%08d\n", r.Uint32())[:uniqueNameSuffixSize]
-		_ = clusterID
+		// uniqueNameSuffixSize := 8
+		// h := fnv.New64a()
+		// h.Write([]byte(*managedCluster.Fqdn))
+		// r := rand.New(rand.NewSource(int64(h.Sum64())))
+		// clusterID := fmt.Sprintf("%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+		// _ = clusterID
 		// vnetSubnetID := (*managedCluster.AgentPoolProfiles)[0].VnetSubnetID
 		pool := containerservice.AgentPool{
 			ManagedClusterAgentPoolProfileProperties: &containerservice.ManagedClusterAgentPoolProfileProperties{
@@ -534,6 +534,7 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 		defer updateCancel()
 
 		aksClient := ap.manager.azClient.agentPoolsClient
+		klog.Infof("pool name", ap.azureRef.Name)
 		err := aksClient.CreateOrUpdate(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name, pool, "")
 		if err != nil {
 			klog.Errorf("Failed to create AKS nodepool (%q): %v", ap.clusterName, err.Error())

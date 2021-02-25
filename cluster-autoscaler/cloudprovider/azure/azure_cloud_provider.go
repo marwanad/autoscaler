@@ -18,6 +18,7 @@ package azure
 
 import (
 	"fmt"
+	"hash/fnv"
 	"io"
 	"math/rand"
 	"os"
@@ -127,7 +128,12 @@ func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 // created on the cloud provider side. The node group is not returned by NodeGroups() until it is created.
 func (azure *AzureCloudProvider) NewNodeGroup(machineType string, labels map[string]string, systemLabels map[string]string,
 	taints []apiv1.Taint, extraResources map[string]resource.Quantity) (cloudprovider.NodeGroup, error) {
-	nodePoolName := fmt.Sprintf("%s%d", machineType, rand.Intn(9999))
+
+	uniqueNameSuffixSize := 8
+	h := fnv.New64a()
+	h.Write([]byte(machineType))
+	r := rand.New(rand.NewSource(int64(h.Sum64())))
+	nodePoolName := fmt.Sprintf("a%08d\n", r.Uint32())[:uniqueNameSuffixSize]
 
 	if gpuRequest, found := extraResources[gpu.ResourceNvidiaGPU]; found {
 		gpuType, found := systemLabels[GPULabel]
