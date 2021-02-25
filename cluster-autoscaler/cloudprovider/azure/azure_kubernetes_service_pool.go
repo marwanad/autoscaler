@@ -511,6 +511,15 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 			return nil, rerr.Error()
 		}
 
+		labels := map[string]*string{}
+		taints := []string{}
+		for k, v := range ap.spec.labels {
+			labels[k] = &v
+		}
+		for _, v := range ap.spec.taints {
+			taints = append(taints, v.String())
+		}
+
 		// TODO(ace): HACK DUE TO KNOWLEDGE OF AKS IMPLEMENTATION
 		// hasn't changed in years though.
 		// uniqueNameSuffixSize := 8
@@ -527,6 +536,11 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 				Count:               to.Int32Ptr(1),
 				Type:                containerservice.VirtualMachineScaleSets,
 				OrchestratorVersion: managedCluster.ManagedClusterProperties.KubernetesVersion,
+				Tags: map[string]*string{
+					"autoprovision": to.StringPtr("true"),
+				},
+				NodeLabels: labels,
+				NodeTaints: &taints,
 			},
 		}
 
@@ -540,6 +554,7 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 			return nil, err.Error()
 		}
 
+		ap.manager.RegisterNodeGroup(ap)
 		ap.exists = true
 
 		return ap, nil
@@ -562,6 +577,7 @@ func (agentPool *AKSAgentPool) Delete() error {
 			return err.Error()
 		}
 
+		ap.manager.UnregisterNodeGroup(ap)
 		ap.exists = false
 
 		return nil
