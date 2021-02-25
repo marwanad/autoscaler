@@ -248,6 +248,9 @@ func newAzClient(cfg *Config, env *azure.Environment) (*azClient, error) {
 	kubernetesServicesClient := containerserviceclient.New(aksClientConfig)
 	klog.V(5).Infof("Created kubernetes services client with authorizer: %v", kubernetesServicesClient)
 
+	agentPoolsClient := agentpoolsclient.New(aksClientConfig)
+	klog.V(5).Infof("Created agentpools client with authorizer: %v", agentPoolsClient)
+
 	return &azClient{
 		disksClient:                     disksClient,
 		interfacesClient:                interfacesClient,
@@ -257,5 +260,6 @@ func newAzClient(cfg *Config, env *azure.Environment) (*azClient, error) {
 		virtualMachinesClient:           virtualMachinesClient,
 		storageAccountsClient:           storageAccountsClient,
 		managedKubernetesServicesClient: kubernetesServicesClient,
+		agentPoolsClient:                agentPoolsClient,
 	}, nil
 }

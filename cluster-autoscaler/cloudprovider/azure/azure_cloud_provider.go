@@ -17,14 +17,18 @@ limitations under the License.
 package azure
 
 import (
+	"fmt"
 	"io"
+	"math/rand"
 	"os"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/config"
+	"k8s.io/autoscaler/cluster-autoscaler/config/dynamic"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
+	"k8s.io/autoscaler/cluster-autoscaler/utils/gpu"
 	klog "k8s.io/klog/v2"
 )
 
@@ -123,7 +127,58 @@ func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 // created on the cloud provider side. The node group is not returned by NodeGroups() until it is created.
 func (azure *AzureCloudProvider) NewNodeGroup(machineType string, labels map[string]string, systemLabels map[string]string,
 	taints []apiv1.Taint, extraResources map[string]resource.Quantity) (cloudprovider.NodeGroup, error) {
-	return nil, cloudprovider.ErrNotImplemented
+	nodePoolName := fmt.Sprintf("%s%d", machineType, rand.Intn(9999))
+
+	if gpuRequest, found := extraResources[gpu.ResourceNvidiaGPU]; found {
+		gpuType, found := systemLabels[GPULabel]
+		if !found {
+			return nil, cloudprovider.ErrIllegalConfiguration
+		}
+		gpuCount, err := getNormalizedGpuCount(gpuRequest.Value())
+		if err != nil {
+			return nil, err
+		}
+		extraResources[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
+		labels[GPULabel] = gpuType
+
+		taint := apiv1.Taint{
+			Effect: apiv1.TaintEffectNoSchedule,
+			Key:    "accelerator",
+			Value:  gpuType,
+		}
+		taints = append(taints, taint)
+	}
+
+	// TODO(ace): change min/max
+	spec := &dynamic.NodeGroupSpec{
+		Name:               nodePoolName,
+		MinSize:            0,
+		MaxSize:            500,
+		SupportScaleToZero: true,
+	}
+
+	ng, err := NewAKSAgentPool(spec, azure.azureManager, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new node group: %w", err)
+	}
+
+	ng.spec = &autoprovisioningSpec{
+		machineType:    machineType,
+		labels:         labels,
+		taints:         taints,
+		extraResources: extraResources,
+	}
+
+	return ng, nil
+}
+
+func getNormalizedGpuCount(initialCount int64) (int64, error) {
+	for i := int64(1); i <= int64(8); i = 2 * i {
+		if i >= initialCount {
+			return i, nil
+		}
+	}
+	return 0, cloudprovider.ErrIllegalConfiguration
 }
 
 // GetResourceLimiter returns struct containing limits (max, min) for resources (cores, memory etc.).

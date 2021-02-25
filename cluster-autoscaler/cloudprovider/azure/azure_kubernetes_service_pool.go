@@ -18,17 +18,23 @@ package azure
 
 import (
 	"fmt"
+	"hash/fnv"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
+	"github.com/Azure/go-autorest/autorest/to"
+	"k8s.io/apimachinery/pkg/api/resource"
+	cloudvolume "k8s.io/cloud-provider/volume"
 	klog "k8s.io/klog/v2"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/autoscaler/cluster-autoscaler/cloudprovider"
 	"k8s.io/autoscaler/cluster-autoscaler/config"
 	"k8s.io/autoscaler/cluster-autoscaler/config/dynamic"
+	kubeletapis "k8s.io/kubernetes/pkg/kubelet/apis"
 	schedulerframework "k8s.io/kubernetes/pkg/scheduler/framework"
 )
 
@@ -43,11 +49,22 @@ type AKSAgentPool struct {
 	clusterName       string
 	resourceGroup     string
 	nodeResourceGroup string
+	location          string
 	exists            bool
+	autoprovisioned   bool
+	spec              *autoprovisioningSpec
 
 	curSize     int
 	lastRefresh time.Time
 	mutex       sync.Mutex
+}
+
+// Information about what autosprovisioning would like from this mig.
+type autoprovisioningSpec struct {
+	machineType    string
+	labels         map[string]string
+	taints         []apiv1.Taint
+	extraResources map[string]resource.Quantity
 }
 
 //NewAKSAgentPool constructs AKSAgentPool from the --node param
@@ -57,11 +74,13 @@ func NewAKSAgentPool(spec *dynamic.NodeGroupSpec, am *AzureManager, exists bool)
 		azureRef: azureRef{
 			Name: spec.Name,
 		},
-		minSize: spec.MinSize,
-		maxSize: spec.MaxSize,
-		manager: am,
-		curSize: -1,
-		exists:  exists,
+		minSize:         spec.MinSize,
+		maxSize:         spec.MaxSize,
+		manager:         am,
+		curSize:         -1,
+		location:        am.config.Location,
+		exists:          exists,
+		autoprovisioned: !exists,
 	}
 
 	asg.util = &AzUtil{
@@ -411,32 +430,66 @@ func (agentPool *AKSAgentPool) Nodes() ([]cloudprovider.Instance, error) {
 
 //TemplateNodeInfo is not implemented.
 func (agentPool *AKSAgentPool) TemplateNodeInfo() (*schedulerframework.NodeInfo, error) {
-	ctx, cancel := getContextWithCancel()
-	defer cancel()
+	if agentPool.exists {
+		ctx, cancel := getContextWithCancel()
+		defer cancel()
 
-	managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
-		agentPool.resourceGroup,
-		agentPool.clusterName)
-	if rerr != nil {
-		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
-		return nil, rerr.Error()
+		managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
+			agentPool.resourceGroup,
+			agentPool.clusterName)
+		if rerr != nil {
+			klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
+			return nil, rerr.Error()
+		}
+
+		// TODO(ace): this should not fetch from AKS. It needs to use data
+		// stored in the struct. Location in particular needs to be predefined.
+		pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
+		if pool == nil {
+			return nil, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
+		}
+
+		isWindows := strings.EqualFold(string(pool.OsType), "windows")
+
+		node, err := buildNodeFromTemplate(agentPool.azureRef.Name, string(pool.VMSize), *managedCluster.Location, pool.AvailabilityZones, isWindows, pool.Tags)
+		if err != nil {
+			return nil, err
+		}
+
+		nodeInfo := schedulerframework.NewNodeInfo(cloudprovider.BuildKubeProxy(agentPool.azureRef.Name))
+		nodeInfo.SetNode(node)
+		return nodeInfo, nil
+	} else if agentPool.spec != nil {
+		var zones *[]string
+		zoneString := agentPool.spec.labels[apiv1.LabelZoneFailureDomain]
+		if len(zoneString) > 0 {
+			zs := strings.Split(zoneString, cloudvolume.LabelMultiZoneDelimiter)
+			zones = &zs
+		}
+		osLabel := agentPool.spec.labels[kubeletapis.LabelOS]
+		osLabelStable := agentPool.spec.labels[apiv1.LabelOSStable]
+		if osLabel != "" && osLabelStable != "" && osLabel != osLabelStable {
+			return nil, fmt.Errorf("label '%s=%s' and label '%s=%s' must match, and they do not",
+				kubeletapis.LabelOS,
+				osLabel,
+				apiv1.LabelOSStable,
+				osLabelStable,
+			)
+		}
+
+		isWindows := strings.EqualFold(osLabel, "windows")
+
+		node, err := buildNodeFromTemplate(agentPool.azureRef.Name, agentPool.spec.machineType, agentPool.location, zones, isWindows, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		nodeInfo := schedulerframework.NewNodeInfo(cloudprovider.BuildKubeProxy(agentPool.azureRef.Name))
+		nodeInfo.SetNode(node)
+		return nodeInfo, nil
 	}
 
-	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
-	if pool == nil {
-		return nil, fmt.Errorf("could not find pool with name: %s", agentPool.azureRef)
-	}
-
-	isWindows := strings.EqualFold(string(pool.OsType), "windows")
-
-	node, err := buildNodeFromTemplate(agentPool.azureRef.Name, string(pool.VMSize), *managedCluster.Location, pool.AvailabilityZones, isWindows, pool.Tags)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeInfo := schedulerframework.NewNodeInfo(cloudprovider.BuildKubeProxy(agentPool.azureRef.Name))
-	nodeInfo.SetNode(node)
-	return nodeInfo, nil
+	return nil, cloudprovider.ErrNotImplemented
 }
 
 //Exist is always true since we are initialized with an existing agentpool
@@ -444,15 +497,76 @@ func (agentPool *AKSAgentPool) Exist() bool {
 	return agentPool.exists
 }
 
-//Create is returns already exists since we don't support the
-//agent pool creation.
+// Create triggers creation of autoprovisioned nodepools on AKS side.
+// not implemented for other vm types.
 func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
+	ap := agentPool
+	if !ap.exists && ap.autoprovisioned {
+		ctx, cancel := getContextWithCancel()
+		defer cancel()
+
+		managedCluster, rerr := ap.manager.azClient.managedKubernetesServicesClient.Get(ctx, ap.resourceGroup, ap.clusterName)
+		if rerr != nil {
+			klog.Errorf("Failed to get AKS cluster (name:%s): %s", ap.clusterName, rerr.Error())
+			return nil, rerr.Error()
+		}
+
+		// TODO(ace): HACK DUE TO KNOWLEDGE OF AKS IMPLEMENTATION
+		// hasn't changed in years though.
+		uniqueNameSuffixSize := 8
+		h := fnv.New64a()
+		h.Write([]byte(*managedCluster.Fqdn))
+		r := rand.New(rand.NewSource(int64(h.Sum64())))
+		clusterID := fmt.Sprintf("%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+		_ = clusterID
+		// vnetSubnetID := (*managedCluster.AgentPoolProfiles)[0].VnetSubnetID
+		pool := containerservice.AgentPool{
+			ManagedClusterAgentPoolProfileProperties: &containerservice.ManagedClusterAgentPoolProfileProperties{
+				VMSize:              containerservice.VMSizeTypes(ap.spec.machineType),
+				OsType:              containerservice.Linux,
+				Count:               to.Int32Ptr(1),
+				Type:                containerservice.VirtualMachineScaleSets,
+				OrchestratorVersion: managedCluster.ManagedClusterProperties.KubernetesVersion,
+			},
+		}
+
+		updateCtx, updateCancel := getContextWithCancel()
+		defer updateCancel()
+
+		aksClient := ap.manager.azClient.agentPoolsClient
+		err := aksClient.CreateOrUpdate(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name, pool, "")
+		if err != nil {
+			klog.Errorf("Failed to create AKS nodepool (%q): %v", ap.clusterName, err.Error())
+			return nil, err.Error()
+		}
+
+		ap.exists = true
+
+		return ap, nil
+	}
+
 	return nil, cloudprovider.ErrAlreadyExist
 }
 
-//Delete is not implemented since we don't support agent pool
-//deletion.
+// Delete deletes autoprovisioned node pools. Not supported otherwise.
 func (agentPool *AKSAgentPool) Delete() error {
+	ap := agentPool
+	if ap.autoprovisioned {
+		updateCtx, updateCancel := getContextWithCancel()
+		defer updateCancel()
+
+		aksClient := ap.manager.azClient.agentPoolsClient
+		err := aksClient.Delete(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name)
+		if err != nil {
+			klog.Errorf("Failed to delete AKS nodepool (%q): %v", ap.clusterName, err.Error())
+			return err.Error()
+		}
+
+		ap.exists = false
+
+		return nil
+	}
+
 	return cloudprovider.ErrNotImplemented
 }
 
