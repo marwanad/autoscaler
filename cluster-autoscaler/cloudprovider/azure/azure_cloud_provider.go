@@ -22,6 +22,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"strings"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -118,8 +119,12 @@ func (azure *AzureCloudProvider) Pricing() (cloudprovider.PricingModel, errors.A
 // GetAvailableMachineTypes get all machine types that can be requested from the cloud provider.
 func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 	names := make([]string, 0, len(InstanceTypes))
-	for name := range InstanceTypes {
-		names = append(names, name)
+	for name, val := range InstanceTypes {
+		if strings.HasPrefix(name, "Standard_D") && strings.HasSuffix(name, "s_v3") && !strings.HasSuffix(name, "as_v3") && !strings.HasSuffix(name, "as_v4") && !strings.HasSuffix(name, "_v2") && !strings.HasSuffix(name, "_Promo") {
+			if val.VCPU > 2 {
+				names = append(names, name)
+			}
+		}
 	}
 	return names, nil
 }

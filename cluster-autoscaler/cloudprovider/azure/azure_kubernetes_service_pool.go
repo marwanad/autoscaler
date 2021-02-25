@@ -534,7 +534,6 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 		defer updateCancel()
 
 		aksClient := ap.manager.azClient.agentPoolsClient
-		klog.Infof("pool name", ap.azureRef.Name)
 		err := aksClient.CreateOrUpdate(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name, pool, "")
 		if err != nil {
 			klog.Errorf("Failed to create AKS nodepool (%q): %v", ap.clusterName, err.Error())
