@@ -18,7 +18,7 @@ package azure
 
 import (
 	"fmt"
-	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
+	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-11-01/containerservice"
 	"github.com/Azure/go-autorest/autorest/to"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"math/rand"
@@ -234,7 +234,7 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 	time.Sleep(30 * time.Second)
 	//// Proactively set it to exist, so that we don't hammer more calls
 	//// eventually the 1 minute refresh will take over
-	scaleSet.exists = true
+	//scaleSet.exists = true
 
 	scaleSet.invalidateStatusCacheWithLock()
 	return scaleSet, nil
@@ -455,7 +455,7 @@ func (scaleSet *ScaleSet) TargetSize() (int, error) {
 		size, err := scaleSet.GetScaleSetSize()
 		return int(size), err
 	}
-	klog.V(1).Infof("ScaleSet: %s doesn't exist yet, returning the supposed node count", scaleSet.curSize)
+	klog.V(1).Infof("ScaleSet: %s doesn't exist yet, returning the supposed node count %d", scaleSet.Name, scaleSet.curSize)
 	return int(scaleSet.curSize), nil
 }
 

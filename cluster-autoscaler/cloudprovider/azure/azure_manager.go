@@ -571,10 +571,10 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 
 		}
 	}
-	if len(groups) == 0 {
-		klog.Info("Found no autoprovisioned scale sets. Skipping")
-		return nil
-	}
+	//if len(groups) == 0 {
+	//	klog.Info("Found no autoprovisioned scale sets. Skipping Additions and attempting to clear all registered ones")
+	//	return nil
+	//}
 
 	changed := false
 	exists := make(map[string]bool)

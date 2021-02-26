@@ -23,12 +23,12 @@ import (
 
 	"k8s.io/legacy-cloud-providers/azure/retry"
 
-	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
+	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-11-01/containerservice"
 )
 
 const (
 	// APIVersion is the API version for containerservice.
-	APIVersion = "2020-04-01"
+	APIVersion = "2020-11-01"
 )
 
 // Interface is the client interface for ContainerService.
