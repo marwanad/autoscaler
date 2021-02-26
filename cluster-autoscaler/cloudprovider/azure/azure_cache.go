@@ -66,13 +66,13 @@ func (m *asgCache) Register(newAsg cloudprovider.NodeGroup) bool {
 			}
 
 			m.registeredAsgs[i] = newAsg
-			klog.V(4).Infof("ASG %q updated", newAsg.Id())
+			klog.V(1).Infof("ASG %q updated", newAsg.Id())
 			m.invalidateUnownedInstanceCache()
 			return true
 		}
 	}
 
-	klog.V(4).Infof("Registering ASG %q", newAsg.Id())
+	klog.V(1).Infof("Registering ASG %q", newAsg.Id())
 	m.registeredAsgs = append(m.registeredAsgs, newAsg)
 	m.invalidateUnownedInstanceCache()
 	return true

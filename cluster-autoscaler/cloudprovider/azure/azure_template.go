@@ -85,8 +85,8 @@ func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string
 }
 
 func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.Node, error) {
-	if set.spec == nil {
-		return nil, fmt.Errorf("missing autoprovisioning spec for scale set %s", set.Name)
+	if set.autoProvisioningSpec == nil {
+		return nil, fmt.Errorf("missing autoprovisioning autoProvisioningSpec for scale set %s", set.Name)
 	}
 	node := apiv1.Node{}
 	nodeName := fmt.Sprintf("%s-autoprovisioned-template-%d", set.Name, rand.Int63())
@@ -102,18 +102,18 @@ func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.N
 
 	var vmssType *InstanceType
 	for k := range InstanceTypes {
-		if strings.EqualFold(k, set.spec.machineType) {
+		if strings.EqualFold(k, set.autoProvisioningSpec.machineType) {
 			vmssType = InstanceTypes[k]
 			break
 		}
 	}
 
 	promoRe := regexp.MustCompile(`(?i)_promo`)
-	if promoRe.MatchString(set.spec.machineType) {
+	if promoRe.MatchString(set.autoProvisioningSpec.machineType) {
 		if vmssType == nil {
 			// We didn't find an exact match but this is a promo type, check for matching standard
-			klog.V(1).Infof("No exact match found for %s, checking standard types", set.spec.machineType)
-			skuName := promoRe.ReplaceAllString(set.spec.machineType, "")
+			klog.V(1).Infof("No exact match found for %s, checking standard types", set.autoProvisioningSpec.machineType)
+			skuName := promoRe.ReplaceAllString(set.autoProvisioningSpec.machineType, "")
 			for k := range InstanceTypes {
 				if strings.EqualFold(k, skuName) {
 					vmssType = InstanceTypes[k]
@@ -124,15 +124,18 @@ func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.N
 	}
 
 	if vmssType == nil {
-		return nil, fmt.Errorf("instance type %q not supported", set.spec.machineType)
+		return nil, fmt.Errorf("instance type %q not supported", set.autoProvisioningSpec.machineType)
 	}
 	node.Status.Capacity[apiv1.ResourcePods] = *resource.NewQuantity(110, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceCPU] = *resource.NewQuantity(vmssType.VCPU, resource.DecimalSI)
 	node.Status.Capacity[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(vmssType.GPU, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceMemory] = *resource.NewQuantity(vmssType.MemoryMb*1024*1024, resource.DecimalSI)
-	// TODO: proper label
+	// TODO: proper taints
 
-	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.spec.machineType, location)
+
+	node.Status.Allocatable = node.Status.Capacity
+
+	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.autoProvisioningSpec.machineType, location)
 	node.Labels = labels
 
 	// Ready status

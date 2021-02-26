@@ -646,7 +646,7 @@ func TestFetchExplicitAsgs(t *testing.T) {
 	}
 	testAS.manager.config.VMType = vmTypeStandard
 	err := testAS.manager.fetchExplicitAsgs([]string{"1:5:testAS"})
-	expectedErr := fmt.Errorf("failed to parse node group spec: deployment not found")
+	expectedErr := fmt.Errorf("failed to parse node group autoProvisioningSpec: deployment not found")
 	assert.Equal(t, expectedErr, err, "testAS.manager.fetchExplicitAsgs return error does not match, expected: %v, actual: %v", expectedErr, err)
 	err = testAS.manager.fetchExplicitAsgs(nil)
 	assert.NoError(t, err)
@@ -654,7 +654,7 @@ func TestFetchExplicitAsgs(t *testing.T) {
 	// test invalidVMType
 	manager.config.VMType = "invalidVMType"
 	err = manager.fetchExplicitAsgs(ngdo.NodeGroupSpecs)
-	expectedErr = fmt.Errorf("failed to parse node group spec: vmtype invalidVMType not supported")
+	expectedErr = fmt.Errorf("failed to parse node group autoProvisioningSpec: vmtype invalidVMType not supported")
 	assert.Equal(t, expectedErr, err, "manager.fetchExplicitAsgs return error does not match, expected: %v, actual: %v", expectedErr, err)
 }
 

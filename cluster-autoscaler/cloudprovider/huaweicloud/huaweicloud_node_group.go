@@ -315,7 +315,7 @@ func (ng *NodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side. Not implemented.
-func (ng *NodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (ng *NodeGroup) Create(targetSize int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 

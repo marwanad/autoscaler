@@ -17,7 +17,12 @@ limitations under the License.
 package azure
 
 import (
+	"fmt"
+	"hash/fnv"
 	"io"
+	"k8s.io/autoscaler/cluster-autoscaler/config/dynamic"
+	"k8s.io/autoscaler/cluster-autoscaler/utils/gpu"
+	"math/rand"
 	"os"
 	"strings"
 
@@ -94,7 +99,7 @@ func (azure *AzureCloudProvider) NodeGroups() []cloudprovider.NodeGroup {
 func (azure *AzureCloudProvider) NodeGroupForNode(node *apiv1.Node) (cloudprovider.NodeGroup, error) {
 	klog.V(6).Infof("NodeGroupForNode: starts")
 	if node.Spec.ProviderID == "" {
-		klog.V(6).Infof("Skipping the search for node group for the node '%s' because it has no spec.ProviderID", node.ObjectMeta.Name)
+		klog.V(6).Infof("Skipping the search for node group for the node '%s' because it has no autoProvisioningSpec.ProviderID", node.ObjectMeta.Name)
 		return nil, nil
 	}
 	klog.V(6).Infof("Searching for node group for the node: %s\n", node.Spec.ProviderID)
@@ -129,7 +134,61 @@ func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 // created on the cloud provider side. The node group is not returned by NodeGroups() until it is created.
 func (azure *AzureCloudProvider) NewNodeGroup(machineType string, labels map[string]string, systemLabels map[string]string,
 	taints []apiv1.Taint, extraResources map[string]resource.Quantity) (cloudprovider.NodeGroup, error) {
-	return nil, cloudprovider.ErrNotImplemented
+	uniqueNameSuffixSize := 8
+	h := fnv.New64a()
+	h.Write([]byte(machineType))
+	r := rand.New(rand.NewSource(int64(h.Sum64())))
+	nodePoolName := fmt.Sprintf("a%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+
+	if gpuRequest, found := extraResources[gpu.ResourceNvidiaGPU]; found {
+		gpuType, found := systemLabels[GPULabel]
+		if !found {
+			return nil, cloudprovider.ErrIllegalConfiguration
+		}
+		gpuCount, err := getNormalizedGpuCount(gpuRequest.Value())
+		if err != nil {
+			return nil, err
+		}
+		extraResources[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(gpuCount, resource.DecimalSI)
+		labels[GPULabel] = gpuType
+
+		taint := apiv1.Taint{
+			Effect: apiv1.TaintEffectNoSchedule,
+			Key:    GPULabel,
+			Value:  gpuType,
+		}
+		taints = append(taints, taint)
+	}
+
+	// TODO(ace): change min/max
+	spec := &dynamic.NodeGroupSpec{
+		Name:               nodePoolName,
+		MinSize:            0,
+		MaxSize:            100,
+		SupportScaleToZero: true,
+	}
+
+	ng, err := NewScaleSet(spec, azure.azureManager, 0, false, true)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new node group: %w", err)
+	}
+
+	ng.autoProvisioningSpec = &autoprovisioningSpec{
+		machineType:    machineType,
+		labels:         labels,
+		extraResources: extraResources,
+	}
+
+	return ng, nil
+}
+
+func getNormalizedGpuCount(initialCount int64) (int64, error) {
+	for i := int64(1); i <= int64(8); i = 2 * i {
+		if i >= initialCount {
+			return i, nil
+		}
+	}
+	return 0, cloudprovider.ErrIllegalConfiguration
 }
 
 // GetResourceLimiter returns struct containing limits (max, min) for resources (cores, memory etc.).

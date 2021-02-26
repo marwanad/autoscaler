@@ -105,6 +105,7 @@ type CloudProviderRateLimitConfig struct {
 
 	// Rate limit config for each clients. Values would override default settings above.
 	InterfaceRateLimit              *azclients.RateLimitConfig `json:"interfaceRateLimit,omitempty" yaml:"interfaceRateLimit,omitempty"`
+	KubernetesServiceRateLimit      *azclients.RateLimitConfig `json:"kubernetesServiceRateLimit,omitempty" yaml:"kubernetesServiceRateLimit,omitempty"`
 	VirtualMachineRateLimit         *azclients.RateLimitConfig `json:"virtualMachineRateLimit,omitempty" yaml:"virtualMachineRateLimit,omitempty"`
 	StorageAccountRateLimit         *azclients.RateLimitConfig `json:"storageAccountRateLimit,omitempty" yaml:"storageAccountRateLimit,omitempty"`
 	DiskRateLimit                   *azclients.RateLimitConfig `json:"diskRateLimit,omitempty" yaml:"diskRateLimit,omitempty"`
@@ -219,6 +220,7 @@ func InitializeCloudProviderRateLimitConfig(config *CloudProviderRateLimitConfig
 	config.StorageAccountRateLimit = overrideDefaultRateLimitConfig(&config.RateLimitConfig, config.StorageAccountRateLimit)
 	config.DiskRateLimit = overrideDefaultRateLimitConfig(&config.RateLimitConfig, config.DiskRateLimit)
 	config.VirtualMachineScaleSetRateLimit = overrideDefaultRateLimitConfig(&config.RateLimitConfig, config.VirtualMachineScaleSetRateLimit)
+	config.KubernetesServiceRateLimit = overrideDefaultRateLimitConfig(&config.RateLimitConfig, config.KubernetesServiceRateLimit)
 
 	return nil
 }
@@ -507,7 +509,7 @@ func (m *AzureManager) fetchExplicitAsgs(specs []string) error {
 	for _, spec := range specs {
 		asg, err := m.buildAsgFromSpec(spec)
 		if err != nil {
-			return fmt.Errorf("failed to parse node group spec: %v", err)
+			return fmt.Errorf("failed to parse node group autoProvisioningSpec: %v", err)
 		}
 		if m.RegisterAsg(asg) {
 			changed = true
@@ -527,9 +529,9 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
 
-	result, rerr := m.azClient.virtualMachineScaleSetsClient.List(ctx, m.config.ResourceGroup)
+	result, rerr := m.azClient.virtualMachineScaleSetsClient.List(ctx, m.config.NodeResourceGroup)
 	if rerr != nil {
-		klog.Errorf("VirtualMachineScaleSetsClient.List for %v failed: %v", m.config.ResourceGroup, rerr)
+		klog.Errorf("VirtualMachineScaleSetsClient.List for %v failed: %v", m.config.NodeResourceGroup, rerr)
 		return rerr.Error()
 	}
 
@@ -542,9 +544,14 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 	for _, scaleSet := range result {
 		if val, ok := scaleSet.Tags["autoprovisioned"]; ok {
 			if val != nil && strings.EqualFold(*val, "autonoms") {
+				klog.Infof("Adding scaleSet %s to the list of autoprovisioned pools", *scaleSet.Name)
+				s1 := strings.Split(*scaleSet.Name, "aks-")
+				s2 := strings.Split(s1[1], "-")
+				klog.Infof("adding it under name: %s", s2[0])
+
 				autprovisionedGroups = append(autprovisionedGroups, scaleSet)
 				spec := &dynamic.NodeGroupSpec{
-					Name:               *scaleSet.Name,
+					Name:               s2[0],
 					MinSize:            0,
 					MaxSize:            100,
 					SupportScaleToZero: scaleToZeroSupportedVMSS,
@@ -558,12 +565,12 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 					klog.Errorf("Error creating scaleset :%s", err)
 					return err
 				}
+				asg.vmssName = *scaleSet.Name
 				groups = append(groups, asg)
 			}
 
 		}
 	}
-
 	if len(groups) == 0 {
 		klog.Info("Found no autoprovisioned scale sets. Skipping")
 		return nil
@@ -573,20 +580,24 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 	exists := make(map[string]bool)
 	for _, asg := range groups {
 		asgID := asg.Id()
+		klog.Infof("Setting exists to true for ASG: %s", asgID)
 		exists[asgID] = true
 		if m.explicitlyConfigured[asgID] {
 			klog.V(3).Infof("Ignoring explicitly configured scale set since its not autoprovisioned.", asg.Id())
 			continue
 		}
 		if m.RegisterAsg(asg) {
-			klog.V(3).Infof("Discovered autoprovisioned scale set")
+			klog.V(3).Infof("REgistered autoprovisioned scale set %s", asg.Id())
 			changed = true
 		}
 	}
+
 	// find the ones that got deleted and deregister them
 	for _, asg := range m.getAsgs() {
+		klog.Infof("looping through ASG list with: %s", asg.Id())
 		asgID := asg.Id()
 		if !exists[asgID] && !m.explicitlyConfigured[asgID] {
+			klog.Infof("ASG %s does not exist - removing from cache", asgID)
 			m.UnregisterAsg(asg)
 			changed = true
 		}
@@ -608,14 +619,19 @@ func (m *AzureManager) buildAsgFromSpec(spec string) (cloudprovider.NodeGroup, e
 	}
 	s, err := dynamic.SpecFromString(spec, scaleToZeroSupported)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse node group spec: %v", err)
+		return nil, fmt.Errorf("failed to parse node group autoProvisioningSpec: %v", err)
 	}
 
 	switch m.config.VMType {
 	case vmTypeStandard:
 		return NewAgentPool(s, m)
 	case vmTypeVMSS:
-		return NewScaleSet(s, m, -1, true, false)
+		ss, err := NewScaleSet(s, m, -1, true, false)
+		if err != nil {
+			return ss, err
+		}
+		ss.vmssName = s.Name
+		return ss, nil
 	case vmTypeAKS:
 		return NewAKSAgentPool(s, m)
 	default:
@@ -640,9 +656,9 @@ func (m *AzureManager) forceRefresh() error {
 		klog.Errorf("Failed to fetch auto provisioned node groups: %v", err)
 	}
 
-	if err := m.fetchAutoAsgs(); err != nil {
-		klog.Errorf("Failed to fetch ASGs: %v", err)
-	}
+	//if err := m.fetchAutoAsgs(); err != nil {
+	//	klog.Errorf("Failed to fetch ASGs: %v", err)
+	//}
 	if err := m.regenerateCache(); err != nil {
 		klog.Errorf("Failed to regenerate ASG cache: %v", err)
 		return err
@@ -812,7 +828,7 @@ func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]cloud
 			curSize = *scaleSet.Sku.Capacity
 		}
 
-		asg, err := NewScaleSet(spec, m, curSize, true)
+		asg, err := NewScaleSet(spec, m, curSize, true, false)
 		if err != nil {
 			klog.Warningf("ignoring nodegroup %q %s", *scaleSet.Name, err)
 			continue
@@ -868,7 +884,7 @@ func parseLabelAutoDiscoverySpecs(o cloudprovider.NodeGroupDiscoveryOptions) ([]
 	return cfgs, nil
 }
 
-// parseLabelAutoDiscoverySpec parses a single spec and returns the corredponding node group spec.
+// parseLabelAutoDiscoverySpec parses a single autoProvisioningSpec and returns the corredponding node group autoProvisioningSpec.
 func parseLabelAutoDiscoverySpec(spec string) (labelAutoDiscoveryConfig, error) {
 	cfg := labelAutoDiscoveryConfig{
 		Selector: make(map[string]string),
@@ -876,7 +892,7 @@ func parseLabelAutoDiscoverySpec(spec string) (labelAutoDiscoveryConfig, error) 
 
 	tokens := strings.Split(spec, ":")
 	if len(tokens) != 2 {
-		return cfg, fmt.Errorf("spec \"%s\" should be discoverer:key=value,key=value", spec)
+		return cfg, fmt.Errorf("autoProvisioningSpec \"%s\" should be discoverer:key=value,key=value", spec)
 	}
 	discoverer := tokens[0]
 	if discoverer != autoDiscovererTypeLabel {

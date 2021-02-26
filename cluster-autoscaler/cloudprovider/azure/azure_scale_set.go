@@ -18,6 +18,8 @@ package azure
 
 import (
 	"fmt"
+	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
+	"github.com/Azure/go-autorest/autorest/to"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"math/rand"
 	"net/http"
@@ -38,7 +40,7 @@ import (
 )
 
 var (
-	defaultVmssSizeRefreshPeriod      = 15 * time.Second
+	defaultVmssSizeRefreshPeriod      = 1 * time.Minute
 	defaultVmssInstancesRefreshPeriod = 5 * time.Minute
 	vmssContextTimeout                = 3 * time.Minute
 	vmssSizeMutex                     sync.Mutex
@@ -79,12 +81,14 @@ type ScaleSet struct {
 	minSize int
 	maxSize int
 
-	sizeMutex         sync.Mutex
-	curSize           int64
-	lastSizeRefresh   time.Time
-	sizeRefreshPeriod time.Duration
-	exists            bool
-	spec            *autoprovisioningSpec
+	sizeMutex            sync.Mutex
+	curSize              int64
+	lastSizeRefresh      time.Time
+	sizeRefreshPeriod    time.Duration
+	exists               bool
+	autoprovisioned      bool
+	vmssName string
+	autoProvisioningSpec *autoprovisioningSpec
 
 	instancesRefreshPeriod time.Duration
 	instancesRefreshJitter int
@@ -104,6 +108,8 @@ func NewScaleSet(spec *dynamic.NodeGroupSpec, az *AzureManager, curSize int64, e
 		maxSize: spec.MaxSize,
 		manager: az,
 		curSize: curSize,
+		exists: exists,
+		autoprovisioned: autoprovisioned,
 
 		instancesRefreshJitter: az.config.VmssVmsCacheJitter,
 	}
@@ -135,23 +141,126 @@ func (scaleSet *ScaleSet) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (scaleSet *ScaleSet) Create() (cloudprovider.NodeGroup, error) {
+func (scaleSet *ScaleSet) Create(targetSize int) (cloudprovider.NodeGroup, error) {
 	if !scaleSet.Exist() && scaleSet.Autoprovisioned() {
-		return mig.gceManager.createNodePool(mig)
+		return scaleSet.createNodepool(targetSize)
 	} else {
 		klog.Infof("Not attempting to create nodepool (%s/%s) because it already exists", scaleSet.manager.config.ClusterName, scaleSet.Name)
+		return scaleSet, cloudprovider.ErrAlreadyExist
 	}
 }
 
 // Delete deletes the node group on the cloud provider side.
 // This will be executed only for autoprovisioned node groups, once their size drops to 0.
 func (scaleSet *ScaleSet) Delete() error {
-	return cloudprovider.ErrNotImplemented
-}
+	if scaleSet.Autoprovisioned() {
+		updateCtx, updateCancel := getContextWithCancel()
+		defer updateCancel()
+		rgName := scaleSet.manager.config.ResourceGroup
+		clusterName := scaleSet.manager.config.ClusterName
+
+		aksClient := scaleSet.manager.azClient.agentPoolsClient
+		err := aksClient.Delete(updateCtx, rgName, clusterName, scaleSet.azureRef.Name)
+		if err != nil {
+			klog.Errorf("Failed to delete AKS nodepool (%q): %v", clusterName, err.Error())
+			return err.Error()
+		}
+
+		scaleSet.exists = false
+		return nil
+	}
+
+	return cloudprovider.ErrNotImplemented}
 
 // Autoprovisioned returns true if the node group is autoprovisioned.
 func (scaleSet *ScaleSet) Autoprovisioned() bool {
-	return false
+	return scaleSet.autoprovisioned
+}
+
+
+func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGroup, error) {
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+	rgName := scaleSet.manager.config.ResourceGroup
+
+	clusterName := scaleSet.manager.config.ClusterName
+	managedCluster, rerr := scaleSet.manager.azClient.managedKubernetesServicesClient.Get(ctx, rgName, clusterName)
+	if rerr != nil {
+		klog.Errorf("Failed to get AKS cluster (name:%s): %s", clusterName, rerr.Error())
+		return nil, rerr.Error()
+	}
+
+	labels := map[string]*string{}
+	for k, v := range scaleSet.autoProvisioningSpec.labels {
+		labels[k] = &v
+	}
+
+	// TODO(ace): HACK DUE TO KNOWLEDGE OF AKS IMPLEMENTATION
+	// hasn't changed in years though.
+	// uniqueNameSuffixSize := 8
+	// h := fnv.New64a()
+	// h.Write([]byte(*managedCluster.Fqdn))
+	// r := rand.New(rand.NewSource(int64(h.Sum64())))
+	// clusterID := fmt.Sprintf("%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+	// _ = clusterID
+	// vnetSubnetID := (*managedCluster.AgentPoolProfiles)[0].VnetSubnetID
+	pool := containerservice.AgentPool{
+		ManagedClusterAgentPoolProfileProperties: &containerservice.ManagedClusterAgentPoolProfileProperties{
+			VMSize:              containerservice.VMSizeTypes(scaleSet.autoProvisioningSpec.machineType),
+			OsType:              containerservice.Linux,
+			Count:               to.Int32Ptr(int32(targetSize)),
+			Type:                containerservice.VirtualMachineScaleSets,
+			OrchestratorVersion: managedCluster.ManagedClusterProperties.KubernetesVersion,
+			Tags: map[string]*string{
+				"autoprovisioned": to.StringPtr("autonoms"),
+			},
+			NodeLabels: labels,
+		},
+	}
+
+	updateCtx, updateCancel := getContextWithCancel()
+	defer updateCancel()
+	aksClient := scaleSet.manager.azClient.agentPoolsClient
+
+	future, rerr := aksClient.CreateOrUpdateAsync(updateCtx, rgName, clusterName, scaleSet.azureRef.Name, pool, "")
+	if rerr != nil {
+		klog.Errorf("Failed to create AKS nodepool (%q) - %d for cluster %q: %v", scaleSet.Name, int32(targetSize), clusterName, rerr.Error())
+		return nil, rerr.Error()
+	}
+
+	go scaleSet.waitForCreateOrUpdateAp(future)
+
+	// TODO: chill for a bit so that things propagate to VMSS and we are able to refresh
+	time.Sleep(15 * time.Second)
+	//// Proactively set it to exist, so that we don't hammer more calls
+	//// eventually the 1 minute refresh will take over
+	scaleSet.exists = true
+	scaleSet.invalidateStatusCacheWithLock()
+	return scaleSet, nil
+}
+
+
+func (scaleSet *ScaleSet) waitForCreateOrUpdateAp(future *azure.Future) {
+	var err error
+	aksClient := scaleSet.manager.azClient.agentPoolsClient
+
+	defer func() {
+		if err != nil {
+		}
+	}()
+
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+
+	klog.V(3).Infof("Calling aksClient.WaitForCreateOrUpdateResult(%s)", scaleSet.azureRef.Name)
+	httpResponse, err := aksClient.WaitForCreateOrUpdateResult(ctx, future, scaleSet.manager.config.ResourceGroup)
+
+	isSuccess, err := isSuccessHTTPResponse(httpResponse, err)
+	if isSuccess {
+		klog.V(3).Infof("aksClient.WaitForCreateOrUpdateResult(%s) success", scaleSet.azureRef.Name)
+	} else {
+		klog.Errorf("Failed to create or update agentpool", scaleSet.Name, err)
+	}
 }
 
 // MaxSize returns maximum size of the node group.
@@ -179,7 +288,17 @@ func (scaleSet *ScaleSet) getVMSSInfo() (compute.VirtualMachineScaleSet, *retry.
 
 	var newStatus = make(map[string]compute.VirtualMachineScaleSet)
 	for _, vmss := range allVMSS {
-		newStatus[*vmss.Name] = vmss
+		klog.Infof("Found vmss: %s", *vmss.Name)
+		// If autoprovisioned, the scaleSet name is a substring of the vmss name
+		if scaleSet.Autoprovisioned() {
+			klog.Info("Scale set is autoprovisioned, attempting to replace with name")
+			if strings.Contains(*vmss.Name, scaleSet.Name) {
+				klog.Infof("Replacing vmssName: %s with scaleSet name: %s", *vmss.Name, scaleSet.Name)
+				newStatus[scaleSet.Name] = vmss
+			}
+		} else {
+			newStatus[*vmss.Name] = vmss
+		}
 	}
 
 	scaleSetStatusCache.lastRefresh = time.Now()
@@ -196,7 +315,7 @@ func (scaleSet *ScaleSet) getAllVMSSInfo() ([]compute.VirtualMachineScaleSet, *r
 	ctx, cancel := getContextWithTimeout(vmssContextTimeout)
 	defer cancel()
 
-	resourceGroup := scaleSet.manager.config.ResourceGroup
+	resourceGroup := scaleSet.manager.config.NodeResourceGroup
 	setInfo, rerr := scaleSet.manager.azClient.virtualMachineScaleSetsClient.List(ctx, resourceGroup)
 	if rerr != nil {
 		return []compute.VirtualMachineScaleSet{}, rerr
@@ -213,7 +332,7 @@ func (scaleSet *ScaleSet) getCurSize() (int64, error) {
 		return scaleSet.curSize, nil
 	}
 
-	klog.V(5).Infof("Get scale set size for %q", scaleSet.Name)
+	klog.V(3).Infof("Get scale set size for %q", scaleSet.Name)
 	set, rerr := scaleSet.getVMSSInfo()
 	if rerr != nil {
 		if isAzureRequestsThrottled(rerr) {
@@ -229,7 +348,7 @@ func (scaleSet *ScaleSet) getCurSize() (int64, error) {
 	curSize := *set.Sku.Capacity
 	vmssSizeMutex.Unlock()
 
-	klog.V(5).Infof("Getting scale set (%q) capacity: %d\n", scaleSet.Name, curSize)
+	klog.V(3).Infof("Getting scale set (%q) capacity: %d\n", scaleSet.Name, curSize)
 
 	if scaleSet.curSize != curSize {
 		// Invalidate the instance cache if the capacity has changed.
@@ -313,7 +432,7 @@ func (scaleSet *ScaleSet) SetScaleSetSize(size int64) error {
 	ctx, cancel := getContextWithTimeout(vmssContextTimeout)
 	defer cancel()
 	klog.V(3).Infof("Waiting for virtualMachineScaleSetsClient.CreateOrUpdateAsync(%s)", scaleSet.Name)
-	future, rerr := scaleSet.manager.azClient.virtualMachineScaleSetsClient.CreateOrUpdateAsync(ctx, scaleSet.manager.config.ResourceGroup, scaleSet.Name, op)
+	future, rerr := scaleSet.manager.azClient.virtualMachineScaleSetsClient.CreateOrUpdateAsync(ctx, scaleSet.manager.config.NodeResourceGroup, scaleSet.vmssName, op)
 	if rerr != nil {
 		klog.Errorf("virtualMachineScaleSetsClient.CreateOrUpdate for scale set %q failed: %v", scaleSet.Name, rerr)
 		return rerr.Error()
@@ -331,8 +450,12 @@ func (scaleSet *ScaleSet) SetScaleSetSize(size int64) error {
 // TargetSize returns the current TARGET size of the node group. It is possible that the
 // number is different from the number of nodes registered in Kubernetes.
 func (scaleSet *ScaleSet) TargetSize() (int, error) {
-	size, err := scaleSet.GetScaleSetSize()
-	return int(size), err
+	if scaleSet.Exist() {
+		size, err := scaleSet.GetScaleSetSize()
+		return int(size), err
+	}
+	klog.V(1).Infof("ScaleSet: %s doesn't exist yet, returning the supposed node count", scaleSet.curSize)
+	return int(scaleSet.curSize), nil
 }
 
 // IncreaseSize increases Scale Set size
@@ -340,21 +463,23 @@ func (scaleSet *ScaleSet) IncreaseSize(delta int) error {
 	if delta <= 0 {
 		return fmt.Errorf("size increase must be positive")
 	}
+	if scaleSet.Exist() {
+		size, err := scaleSet.GetScaleSetSize()
+		if err != nil {
+			return err
+		}
 
-	size, err := scaleSet.GetScaleSetSize()
-	if err != nil {
-		return err
+		if size == -1 {
+			return fmt.Errorf("the scale set %s is under initialization, skipping IncreaseSize", scaleSet.Name)
+		}
+
+		if int(size)+delta > scaleSet.MaxSize() {
+			return fmt.Errorf("size increase too large - desired:%d max:%d", int(size)+delta, scaleSet.MaxSize())
+		}
+
+		return scaleSet.SetScaleSetSize(size + int64(delta))
 	}
-
-	if size == -1 {
-		return fmt.Errorf("the scale set %s is under initialization, skipping IncreaseSize", scaleSet.Name)
-	}
-
-	if int(size)+delta > scaleSet.MaxSize() {
-		return fmt.Errorf("size increase too large - desired:%d max:%d", int(size)+delta, scaleSet.MaxSize())
-	}
-
-	return scaleSet.SetScaleSetSize(size + int64(delta))
+	return fmt.Errorf("scale set (%q) doesn't exist. Skipping increase size", scaleSet.Name)
 }
 
 // GetScaleSetVms returns list of nodes for the given scale set.
@@ -363,8 +488,8 @@ func (scaleSet *ScaleSet) GetScaleSetVms() ([]compute.VirtualMachineScaleSetVM, 
 	ctx, cancel := getContextWithTimeout(vmssContextTimeout)
 	defer cancel()
 
-	resourceGroup := scaleSet.manager.config.ResourceGroup
-	vmList, rerr := scaleSet.manager.azClient.virtualMachineScaleSetVMsClient.List(ctx, resourceGroup, scaleSet.Name, "")
+	resourceGroup := scaleSet.manager.config.NodeResourceGroup
+	vmList, rerr := scaleSet.manager.azClient.virtualMachineScaleSetVMsClient.List(ctx, resourceGroup, scaleSet.vmssName, "")
 	klog.V(4).Infof("GetScaleSetVms: scaleSet.Name: %s, vmList: %v", scaleSet.Name, vmList)
 	if rerr != nil {
 		klog.Errorf("VirtualMachineScaleSetVMsClient.List failed for %s: %v", scaleSet.Name, rerr)
@@ -419,21 +544,21 @@ func (scaleSet *ScaleSet) DeleteInstances(instances []*azureRef) error {
 
 	klog.V(3).Infof("Deleting vmss instances %v", instances)
 
-	commonAsg, err := scaleSet.manager.GetAsgForInstance(instances[0])
-	if err != nil {
-		return err
-	}
+	//commonAsg, err := scaleSet.manager.GetAsgForInstance(instances[0])
+	//if err != nil {
+	//	return err
+	//}
 
 	instanceIDs := []string{}
 	for _, instance := range instances {
-		asg, err := scaleSet.manager.GetAsgForInstance(instance)
-		if err != nil {
-			return err
-		}
-
-		if !strings.EqualFold(asg.Id(), commonAsg.Id()) {
-			return fmt.Errorf("cannot delete instance (%s) which don't belong to the same Scale Set (%q)", instance.Name, commonAsg)
-		}
+		//asg, err := scaleSet.manager.GetAsgForInstance(instance)
+		//if err != nil {
+		//	return err
+		//}
+		//
+		//if !strings.EqualFold(asg.Id(), commonAsg.Id()) {
+		//	return fmt.Errorf("cannot delete instance (%s) which don't belong to the same Scale Set (%q)", instance.Name, commonAsg)
+		//}
 
 		if cpi, found := scaleSet.getInstanceByProviderID(instance.Name); found && cpi.Status != nil && cpi.Status.State == cloudprovider.InstanceDeleting {
 			klog.V(3).Infof("Skipping deleting instance %s as its current state is deleting", instance.Name)
@@ -461,11 +586,11 @@ func (scaleSet *ScaleSet) DeleteInstances(instances []*azureRef) error {
 
 	ctx, cancel := getContextWithTimeout(vmssContextTimeout)
 	defer cancel()
-	resourceGroup := scaleSet.manager.config.ResourceGroup
+	resourceGroup := scaleSet.manager.config.NodeResourceGroup
 
 	scaleSet.instanceMutex.Lock()
 	klog.V(3).Infof("Calling virtualMachineScaleSetsClient.DeleteInstancesAsync(%v)", requiredIds.InstanceIds)
-	future, rerr := scaleSet.manager.azClient.virtualMachineScaleSetsClient.DeleteInstancesAsync(ctx, resourceGroup, commonAsg.Id(), *requiredIds)
+	future, rerr := scaleSet.manager.azClient.virtualMachineScaleSetsClient.DeleteInstancesAsync(ctx, resourceGroup, scaleSet.vmssName, *requiredIds)
 	scaleSet.instanceMutex.Unlock()
 	if rerr != nil {
 		klog.Errorf("virtualMachineScaleSetsClient.DeleteInstancesAsync for instances %v failed: %v", requiredIds.InstanceIds, rerr)
@@ -538,6 +663,8 @@ func (scaleSet *ScaleSet) TemplateNodeInfo() (*schedulerframework.NodeInfo, erro
 		if err != nil {
 			return nil, err
 		}
+
+		// If it doesn't exist and it's autoprovisioned, predict what it's gonna look like
 	} else if scaleSet.Autoprovisioned() {
 		var err error
 		node, err = buildNodeFromAutoprovisioningSpec(scaleSet, scaleSet.manager.config.Location)

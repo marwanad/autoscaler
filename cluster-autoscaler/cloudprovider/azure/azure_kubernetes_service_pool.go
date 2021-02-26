@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2018-03-31/containerservice"
+	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
 	klog "k8s.io/klog/v2"
 
 	apiv1 "k8s.io/api/core/v1"
@@ -90,12 +90,12 @@ func (agentPool *AKSAgentPool) getAKSNodeCount() (count int, err error) {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
 
-	managedCluster, err := agentPool.manager.azClient.managedContainerServicesClient.Get(ctx,
+	managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
 		agentPool.resourceGroup,
 		agentPool.clusterName)
 	if err != nil {
 		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, err)
-		return -1, err
+		return -1, rerr.Error()
 	}
 
 	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
@@ -115,12 +115,12 @@ func (agentPool *AKSAgentPool) setAKSNodeCount(count int) error {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
 
-	managedCluster, err := agentPool.manager.azClient.managedContainerServicesClient.Get(ctx,
+	managedCluster, rerr := agentPool.manager.azClient.managedKubernetesServicesClient.Get(ctx,
 		agentPool.resourceGroup,
 		agentPool.clusterName)
-	if err != nil {
-		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, err)
-		return err
+	if rerr != nil {
+		klog.Errorf("Failed to get AKS cluster (name:%q): %v", agentPool.clusterName, rerr.Error())
+		return rerr.Error()
 	}
 
 	pool := agentPool.GetAKSAgentPool(managedCluster.AgentPoolProfiles)
@@ -129,27 +129,27 @@ func (agentPool *AKSAgentPool) setAKSNodeCount(count int) error {
 	}
 
 	klog.Infof("Current size: %d, Target size requested: %d", *pool.Count, count)
-
-	updateCtx, updateCancel := getContextWithCancel()
-	defer updateCancel()
-	*pool.Count = int32(count)
-	aksClient := agentPool.manager.azClient.managedContainerServicesClient
-	future, err := aksClient.CreateOrUpdate(updateCtx, agentPool.resourceGroup,
-		agentPool.clusterName, managedCluster)
-	if err != nil {
-		klog.Errorf("Failed to update AKS cluster (%q): %v", agentPool.clusterName, err)
-		return err
-	}
-
-	err = future.WaitForCompletionRef(updateCtx, aksClient.Client)
-	isSuccess, realError := isSuccessHTTPResponse(future.Response(), err)
-	if isSuccess {
-		klog.V(3).Infof("aksClient.CreateOrUpdate for aks cluster %q success", agentPool.clusterName)
-		return nil
-	}
-
-	klog.Errorf("aksClient.CreateOrUpdate for aks cluster %q failed: %v", agentPool.clusterName, realError)
-	return realError
+	return nil
+	//updateCtx, updateCancel := getContextWithCancel()
+	//defer updateCancel()
+	//*pool.Count = int32(count)
+	//aksClient := agentPool.manager.azClient.managedKubernetesServicesClient
+	////future, rerr := aksClient.CreateOrUpdate(updateCtx, agentPool.resourceGroup,
+	////	agentPool.clusterName, managedCluster)
+	////if rerr != nil {
+	////	klog.Errorf("Failed to update AKS cluster (%q): %v", agentPool.clusterName, rerr.Error())
+	////	return rerr.Error()
+	////}
+	////
+	////err := future.WaitForCompletionRef(updateCtx, aksClient.Client)
+	////isSuccess, realError := isSuccessHTTPResponse(future.Response(), err)
+	////if isSuccess {
+	////	klog.V(3).Infof("aksClient.CreateOrUpdate for aks cluster %q success", agentPool.clusterName)
+	////	return nil
+	////}
+	//
+	//klog.Errorf("aksClient.CreateOrUpdate for aks cluster %q failed: %v", agentPool.clusterName, realError)
+	//return realError
 }
 
 //GetNodeCount returns the count of nodes from the managed agent pool profile
@@ -196,7 +196,7 @@ func (agentPool *AKSAgentPool) MaxSize() int {
 }
 
 //MinSize returns the minimum size the cluster is allowed to scaled down
-//to as provided by the node spec in --node parameter.
+//to as provided by the node autoProvisioningSpec in --node parameter.
 func (agentPool *AKSAgentPool) MinSize() int {
 	return agentPool.minSize
 }
@@ -294,7 +294,7 @@ func (agentPool *AKSAgentPool) deleteNodesInternal(providerIDs []string) (delete
 	return deleted, nil
 }
 
-//DeleteNodes extracts the providerIDs from the node spec and calls into the internal
+//DeleteNodes extracts the providerIDs from the node autoProvisioningSpec and calls into the internal
 //delete method.
 func (agentPool *AKSAgentPool) DeleteNodes(nodes []*apiv1.Node) error {
 	agentPool.mutex.Lock()
@@ -423,7 +423,7 @@ func (agentPool *AKSAgentPool) Exist() bool {
 
 //Create is returns already exists since we don't support the
 //agent pool creation.
-func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
+func (agentPool *AKSAgentPool) Create(targetSize int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 
