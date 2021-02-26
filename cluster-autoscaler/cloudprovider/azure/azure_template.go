@@ -126,7 +126,7 @@ func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.N
 	if vmssType == nil {
 		return nil, fmt.Errorf("instance type %q not supported", set.autoProvisioningSpec.machineType)
 	}
-	node.Status.Capacity[apiv1.ResourcePods] = *resource.NewQuantity(110, resource.DecimalSI)
+	node.Status.Capacity[apiv1.ResourcePods] = *resource.NewQuantity(30, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceCPU] = *resource.NewQuantity(vmssType.VCPU, resource.DecimalSI)
 	node.Status.Capacity[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(vmssType.GPU, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceMemory] = *resource.NewQuantity(vmssType.MemoryMb*1024*1024, resource.DecimalSI)
