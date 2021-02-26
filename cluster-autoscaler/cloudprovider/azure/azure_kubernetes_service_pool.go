@@ -222,18 +222,21 @@ func (agentPool *AKSAgentPool) TargetSize() (int, error) {
 	agentPool.mutex.Lock()
 	defer agentPool.mutex.Unlock()
 
-	if agentPool.lastRefresh.Add(15 * time.Second).After(time.Now()) {
-		return agentPool.curSize, nil
+	if agentPool.exists {
+		if agentPool.lastRefresh.Add(15 * time.Second).After(time.Now()) {
+			return agentPool.curSize, nil
+		}
+
+		count, err := agentPool.GetNodeCount()
+		if err != nil {
+			return -1, err
+		}
+		klog.V(5).Infof("Got new size %d for agent pool (%q)", count, agentPool.Name)
+
+		agentPool.curSize = count
+		agentPool.lastRefresh = time.Now()
 	}
 
-	count, err := agentPool.GetNodeCount()
-	if err != nil {
-		return -1, err
-	}
-	klog.V(5).Infof("Got new size %d for agent pool (%q)", count, agentPool.Name)
-
-	agentPool.curSize = count
-	agentPool.lastRefresh = time.Now()
 	return agentPool.curSize, nil
 }
 
@@ -257,9 +260,11 @@ func (agentPool *AKSAgentPool) setSizeInternal(targetSize int, isScalingDown boo
 
 	klog.V(2).Infof("Setting size for cluster (%q) with new count (%d)", agentPool.clusterName, targetSize)
 
-	err = agentPool.setAKSNodeCount(targetSize)
-	if err != nil {
-		return err
+	if agentPool.exists {
+		err = agentPool.setAKSNodeCount(targetSize)
+		if err != nil {
+			return err
+		}
 	}
 
 	agentPool.curSize = targetSize
@@ -533,7 +538,7 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 			ManagedClusterAgentPoolProfileProperties: &containerservice.ManagedClusterAgentPoolProfileProperties{
 				VMSize:              containerservice.VMSizeTypes(ap.spec.machineType),
 				OsType:              containerservice.Linux,
-				Count:               to.Int32Ptr(1),
+				Count:               to.Int32Ptr(int32(ap.curSize)),
 				Type:                containerservice.VirtualMachineScaleSets,
 				OrchestratorVersion: managedCluster.ManagedClusterProperties.KubernetesVersion,
 				Tags: map[string]*string{
