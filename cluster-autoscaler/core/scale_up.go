@@ -474,6 +474,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 
 		createNodeGroupResults := make([]nodegroups.CreateNodeGroupResult, 0)
 		if !bestOption.NodeGroup.Exist() {
+			klog.Infof("Best option is to create node group: %s with count %d", bestOption.NodeGroup.Id(), bestOption.NodeCount)
 			oldId := bestOption.NodeGroup.Id()
 			createNodeGroupResult, err := processors.NodeGroupManager.CreateNodeGroup(context, bestOption.NodeGroup)
 			if err != nil {

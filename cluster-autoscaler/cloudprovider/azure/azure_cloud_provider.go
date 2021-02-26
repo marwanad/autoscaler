@@ -19,6 +19,7 @@ package azure
 import (
 	"io"
 	"os"
+	"strings"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -111,8 +112,17 @@ func (azure *AzureCloudProvider) Pricing() (cloudprovider.PricingModel, errors.A
 }
 
 // GetAvailableMachineTypes get all machine types that can be requested from the cloud provider.
+// TODO: restrict those to few SKUS and a GPU one
 func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
-	return []string{}, nil
+	names := make([]string, 0, len(InstanceTypes))
+	for name, val := range InstanceTypes {
+		if strings.HasPrefix(name, "Standard_D") && strings.HasSuffix(name, "s_v3") && !strings.HasSuffix(name, "as_v3") && !strings.HasSuffix(name, "as_v4") && !strings.HasSuffix(name, "_v2") && !strings.HasSuffix(name, "_Promo") {
+			if val.VCPU > 2 {
+				names = append(names, name)
+			}
+		}
+	}
+	return names, nil
 }
 
 // NewNodeGroup builds a theoretical node group based on the node definition provided. The node group is not automatically

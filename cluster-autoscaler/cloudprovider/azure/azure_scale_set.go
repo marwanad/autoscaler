@@ -18,6 +18,7 @@ package azure
 
 import (
 	"fmt"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -64,6 +65,12 @@ func init() {
 	autorest.StatusCodesForRetry = statusCodesForRetry
 }
 
+type autoprovisioningSpec struct {
+	machineType    string
+	labels         map[string]string
+	extraResources map[string]resource.Quantity
+}
+
 // ScaleSet implements NodeGroup interface.
 type ScaleSet struct {
 	azureRef
@@ -76,6 +83,8 @@ type ScaleSet struct {
 	curSize           int64
 	lastSizeRefresh   time.Time
 	sizeRefreshPeriod time.Duration
+	exists            bool
+	spec            *autoprovisioningSpec
 
 	instancesRefreshPeriod time.Duration
 	instancesRefreshJitter int
@@ -86,7 +95,7 @@ type ScaleSet struct {
 }
 
 // NewScaleSet creates a new NewScaleSet.
-func NewScaleSet(spec *dynamic.NodeGroupSpec, az *AzureManager, curSize int64) (*ScaleSet, error) {
+func NewScaleSet(spec *dynamic.NodeGroupSpec, az *AzureManager, curSize int64, exists bool, autoprovisioned bool) (*ScaleSet, error) {
 	scaleSet := &ScaleSet{
 		azureRef: azureRef{
 			Name: spec.Name,
@@ -122,12 +131,16 @@ func (scaleSet *ScaleSet) MinSize() int {
 // Exist checks if the node group really exists on the cloud provider side. Allows to tell the
 // theoretical node group from the real one.
 func (scaleSet *ScaleSet) Exist() bool {
-	return true
+	return scaleSet.exists
 }
 
 // Create creates the node group on the cloud provider side.
 func (scaleSet *ScaleSet) Create() (cloudprovider.NodeGroup, error) {
-	return nil, cloudprovider.ErrAlreadyExist
+	if !scaleSet.Exist() && scaleSet.Autoprovisioned() {
+		return mig.gceManager.createNodePool(mig)
+	} else {
+		klog.Infof("Not attempting to create nodepool (%s/%s) because it already exists", scaleSet.manager.config.ClusterName, scaleSet.Name)
+	}
 }
 
 // Delete deletes the node group on the cloud provider side.
@@ -513,15 +526,28 @@ func (scaleSet *ScaleSet) Debug() string {
 
 // TemplateNodeInfo returns a node template for this scale set.
 func (scaleSet *ScaleSet) TemplateNodeInfo() (*schedulerframework.NodeInfo, error) {
-	template, rerr := scaleSet.getVMSSInfo()
-	if rerr != nil {
-		return nil, rerr.Error()
+	var node *apiv1.Node
+	var err error
+	if scaleSet.Exist() {
+		template, rerr := scaleSet.getVMSSInfo()
+		if rerr != nil {
+			return nil, rerr.Error()
+		}
+
+		node, err = buildNodeFromTemplate(scaleSet.Name, template)
+		if err != nil {
+			return nil, err
+		}
+	} else if scaleSet.Autoprovisioned() {
+		var err error
+		node, err = buildNodeFromAutoprovisioningSpec(scaleSet, scaleSet.manager.config.Location)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("unable to get node info for %s/%s", scaleSet.manager.config.ClusterName, scaleSet.Name)
 	}
 
-	node, err := buildNodeFromTemplate(scaleSet.Name, template)
-	if err != nil {
-		return nil, err
-	}
 
 	nodeInfo := schedulerframework.NewNodeInfo(cloudprovider.BuildKubeProxy(scaleSet.Name))
 	nodeInfo.SetNode(node)

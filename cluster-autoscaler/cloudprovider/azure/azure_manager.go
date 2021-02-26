@@ -21,6 +21,7 @@ package azure
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2019-12-01/compute"
 	"io"
 	"io/ioutil"
 	"os"
@@ -489,6 +490,11 @@ func CreateAzureManager(configReader io.Reader, discoveryOpts cloudprovider.Node
 		return nil, err
 	}
 
+	// Fetch autoprovisioned groups
+	if err := manager.fetchAutoprovisionedGroups(); err != nil {
+		return nil, err
+	}
+
 	if err := manager.forceRefresh(); err != nil {
 		return nil, err
 	}
@@ -517,6 +523,84 @@ func (m *AzureManager) fetchExplicitAsgs(specs []string) error {
 	return nil
 }
 
+func (m *AzureManager) fetchAutoprovisionedGroups() error {
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+
+	result, rerr := m.azClient.virtualMachineScaleSetsClient.List(ctx, m.config.ResourceGroup)
+	if rerr != nil {
+		klog.Errorf("VirtualMachineScaleSetsClient.List for %v failed: %v", m.config.ResourceGroup, rerr)
+		return rerr.Error()
+	}
+
+	// Get list of all autoprovisioned
+	var autprovisionedGroups []compute.VirtualMachineScaleSet
+
+	// holds list of all existing autoprovisioned groups
+	var groups []cloudprovider.NodeGroup
+
+	for _, scaleSet := range result {
+		if val, ok := scaleSet.Tags["autoprovisioned"]; ok {
+			if val != nil && strings.EqualFold(*val, "autonoms") {
+				autprovisionedGroups = append(autprovisionedGroups, scaleSet)
+				spec := &dynamic.NodeGroupSpec{
+					Name:               *scaleSet.Name,
+					MinSize:            0,
+					MaxSize:            100,
+					SupportScaleToZero: scaleToZeroSupportedVMSS,
+				}
+				curSize := int64(-1)
+				if scaleSet.Sku != nil && scaleSet.Sku.Capacity != nil {
+					curSize = *scaleSet.Sku.Capacity
+				}
+				asg, err := NewScaleSet(spec, m, curSize, true, true)
+				if err != nil {
+					klog.Errorf("Error creating scaleset :%s", err)
+					return err
+				}
+				groups = append(groups, asg)
+			}
+
+		}
+	}
+
+	if len(groups) == 0 {
+		klog.Info("Found no autoprovisioned scale sets. Skipping")
+		return nil
+	}
+
+	changed := false
+	exists := make(map[string]bool)
+	for _, asg := range groups {
+		asgID := asg.Id()
+		exists[asgID] = true
+		if m.explicitlyConfigured[asgID] {
+			klog.V(3).Infof("Ignoring explicitly configured scale set since its not autoprovisioned.", asg.Id())
+			continue
+		}
+		if m.RegisterAsg(asg) {
+			klog.V(3).Infof("Discovered autoprovisioned scale set")
+			changed = true
+		}
+	}
+	// find the ones that got deleted and deregister them
+	for _, asg := range m.getAsgs() {
+		asgID := asg.Id()
+		if !exists[asgID] && !m.explicitlyConfigured[asgID] {
+			m.UnregisterAsg(asg)
+			changed = true
+		}
+	}
+
+	// regenerate caches if things changed
+	if changed {
+		if err := m.regenerateCache(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *AzureManager) buildAsgFromSpec(spec string) (cloudprovider.NodeGroup, error) {
 	scaleToZeroSupported := scaleToZeroSupportedStandard
 	if strings.EqualFold(m.config.VMType, vmTypeVMSS) {
@@ -531,7 +615,7 @@ func (m *AzureManager) buildAsgFromSpec(spec string) (cloudprovider.NodeGroup, e
 	case vmTypeStandard:
 		return NewAgentPool(s, m)
 	case vmTypeVMSS:
-		return NewScaleSet(s, m, -1)
+		return NewScaleSet(s, m, -1, true, false)
 	case vmTypeAKS:
 		return NewAKSAgentPool(s, m)
 	default:
@@ -551,6 +635,11 @@ func (m *AzureManager) Refresh() error {
 func (m *AzureManager) forceRefresh() error {
 	// TODO: Refactor some of this logic out of forceRefresh and
 	// consider merging the list call with the Nodes() call
+
+	if err := m.fetchAutoprovisionedGroups(); err != nil {
+		klog.Errorf("Failed to fetch auto provisioned node groups: %v", err)
+	}
+
 	if err := m.fetchAutoAsgs(); err != nil {
 		klog.Errorf("Failed to fetch ASGs: %v", err)
 	}
@@ -723,7 +812,7 @@ func (m *AzureManager) listScaleSets(filter []labelAutoDiscoveryConfig) ([]cloud
 			curSize = *scaleSet.Sku.Capacity
 		}
 
-		asg, err := NewScaleSet(spec, m, curSize)
+		asg, err := NewScaleSet(spec, m, curSize, true)
 		if err != nil {
 			klog.Warningf("ignoring nodegroup %q %s", *scaleSet.Name, err)
 			continue

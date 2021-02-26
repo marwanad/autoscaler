@@ -41,6 +41,22 @@ func buildInstanceOS(template compute.VirtualMachineScaleSet) string {
 	return instanceOS
 }
 
+func buildGenericLabelsForAutoProvisionedNode(nodeName, skuName, location string) map[string]string{
+	result := make(map[string]string)
+
+	result[kubeletapis.LabelArch] = cloudprovider.DefaultArch
+	result[apiv1.LabelArchStable] = cloudprovider.DefaultArch
+
+	result[kubeletapis.LabelOS] = cloudprovider.DefaultOS
+	result[apiv1.LabelOSStable] = cloudprovider.DefaultOS
+
+	result[apiv1.LabelInstanceType] = skuName
+	result[apiv1.LabelZoneRegion] = strings.ToLower(location)
+
+	result[apiv1.LabelHostname] = nodeName
+
+	return result
+}
 func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string) map[string]string {
 	result := make(map[string]string)
 
@@ -66,6 +82,62 @@ func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string
 
 	result[apiv1.LabelHostname] = nodeName
 	return result
+}
+
+func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.Node, error) {
+	if set.spec == nil {
+		return nil, fmt.Errorf("missing autoprovisioning spec for scale set %s", set.Name)
+	}
+	node := apiv1.Node{}
+	nodeName := fmt.Sprintf("%s-autoprovisioned-template-%d", set.Name, rand.Int63())
+
+	node.ObjectMeta = metav1.ObjectMeta{
+		Name:     nodeName,
+		Labels:   map[string]string{},
+	}
+
+	node.Status = apiv1.NodeStatus{
+		Capacity: apiv1.ResourceList{},
+	}
+
+	var vmssType *InstanceType
+	for k := range InstanceTypes {
+		if strings.EqualFold(k, set.spec.machineType) {
+			vmssType = InstanceTypes[k]
+			break
+		}
+	}
+
+	promoRe := regexp.MustCompile(`(?i)_promo`)
+	if promoRe.MatchString(set.spec.machineType) {
+		if vmssType == nil {
+			// We didn't find an exact match but this is a promo type, check for matching standard
+			klog.V(1).Infof("No exact match found for %s, checking standard types", set.spec.machineType)
+			skuName := promoRe.ReplaceAllString(set.spec.machineType, "")
+			for k := range InstanceTypes {
+				if strings.EqualFold(k, skuName) {
+					vmssType = InstanceTypes[k]
+					break
+				}
+			}
+		}
+	}
+
+	if vmssType == nil {
+		return nil, fmt.Errorf("instance type %q not supported", set.spec.machineType)
+	}
+	node.Status.Capacity[apiv1.ResourcePods] = *resource.NewQuantity(110, resource.DecimalSI)
+	node.Status.Capacity[apiv1.ResourceCPU] = *resource.NewQuantity(vmssType.VCPU, resource.DecimalSI)
+	node.Status.Capacity[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(vmssType.GPU, resource.DecimalSI)
+	node.Status.Capacity[apiv1.ResourceMemory] = *resource.NewQuantity(vmssType.MemoryMb*1024*1024, resource.DecimalSI)
+	// TODO: proper label
+
+	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.spec.machineType, location)
+	node.Labels = labels
+
+	// Ready status
+	node.Status.Conditions = cloudprovider.BuildReadyConditions()
+	return &node, nil
 }
 
 func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineScaleSet) (*apiv1.Node, error) {
