@@ -49,7 +49,7 @@ func (f *FakeNodeGroup) TemplateNodeInfo() (*schedulerframework.NodeInfo, error)
 	return nil, cloudprovider.ErrNotImplemented
 }
 func (f *FakeNodeGroup) Exist() bool { return true }
-func (f *FakeNodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (f *FakeNodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 func (f *FakeNodeGroup) Delete() error         { return cloudprovider.ErrNotImplemented }

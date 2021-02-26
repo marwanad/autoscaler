@@ -32,7 +32,7 @@ type CreateNodeGroupResult struct {
 
 // NodeGroupManager is responsible for creating/deleting node groups.
 type NodeGroupManager interface {
-	CreateNodeGroup(context *context.AutoscalingContext, nodeGroup cloudprovider.NodeGroup) (CreateNodeGroupResult, errors.AutoscalerError)
+	CreateNodeGroup(context *context.AutoscalingContext, nodeCount int, nodeGroup cloudprovider.NodeGroup) (CreateNodeGroupResult, errors.AutoscalerError)
 	RemoveUnneededNodeGroups(context *context.AutoscalingContext) (removedNodeGroups []cloudprovider.NodeGroup, err error)
 	CleanUp()
 }

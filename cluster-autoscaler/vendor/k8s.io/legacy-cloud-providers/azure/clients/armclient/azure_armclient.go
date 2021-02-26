@@ -451,6 +451,25 @@ func (c *Client) PutResourceWithDecorators(ctx context.Context, resourceID strin
 	return response, nil
 }
 
+// PutResourceWithDecoratorsAsync puts a resource by resource ID
+func (c *Client) PutResourceWithDecoratorsAsync(ctx context.Context, resourceID string, parameters interface{}, decorators []autorest.PrepareDecorator) (*azure.Future, *retry.Error) {
+	request, err := c.PreparePutRequest(ctx, decorators...)
+	if err != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "put.prepare", resourceID, err)
+		return nil, retry.NewError(false, err)
+	}
+
+	future, resp, clientErr := c.SendAsync(ctx, request)
+	defer c.CloseResponse(ctx, resp)
+	if clientErr != nil {
+		klog.V(5).Infof("Received error in %s: resourceID: %s, error: %s", "put.send", resourceID, clientErr.Error())
+		return nil, clientErr
+	}
+
+	return future, nil
+}
+
+
 // PatchResource patches a resource by resource ID
 func (c *Client) PatchResource(ctx context.Context, resourceID string, parameters interface{}) (*http.Response, *retry.Error) {
 	decorators := []autorest.PrepareDecorator{

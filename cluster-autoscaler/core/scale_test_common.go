@@ -186,7 +186,7 @@ type mockAutoprovisioningNodeGroupManager struct {
 }
 
 func (p *mockAutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.AutoscalingContext, nodeGroup cloudprovider.NodeGroup) (nodegroups.CreateNodeGroupResult, errors.AutoscalerError) {
-	newNodeGroup, err := nodeGroup.Create()
+	newNodeGroup, err := nodeGroup.Create(0)
 	assert.NoError(p.t, err)
 	metrics.RegisterNodeGroupCreation()
 	extraGroups := []cloudprovider.NodeGroup{}
@@ -208,7 +208,7 @@ func (p *mockAutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.
 			fmt.Sprintf("%d", i+1),
 		)
 		assert.NoError(p.t, err)
-		extraGroup, err := extraNodeGroup.Create()
+		extraGroup, err := extraNodeGroup.Create(0)
 		assert.NoError(p.t, err)
 		metrics.RegisterNodeGroupCreation()
 		extraGroups = append(extraGroups, extraGroup)

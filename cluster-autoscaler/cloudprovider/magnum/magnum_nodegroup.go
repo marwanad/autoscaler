@@ -211,7 +211,7 @@ func (ng *magnumNodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (ng *magnumNodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (ng *magnumNodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 
