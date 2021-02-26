@@ -231,10 +231,11 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 	go scaleSet.waitForCreateOrUpdateAp(future)
 
 	// TODO: chill for a bit so that things propagate to VMSS and we are able to refresh
-	time.Sleep(15 * time.Second)
+	time.Sleep(30 * time.Second)
 	//// Proactively set it to exist, so that we don't hammer more calls
 	//// eventually the 1 minute refresh will take over
 	scaleSet.exists = true
+
 	scaleSet.invalidateStatusCacheWithLock()
 	return scaleSet, nil
 }
