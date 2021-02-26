@@ -475,7 +475,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 		createNodeGroupResults := make([]nodegroups.CreateNodeGroupResult, 0)
 		if !bestOption.NodeGroup.Exist() {
 			oldId := bestOption.NodeGroup.Id()
-			createNodeGroupResult, err := processors.NodeGroupManager.CreateNodeGroup(context, bestOption.NodeGroup)
+			createNodeGroupResult, err := processors.NodeGroupManager.CreateNodeGroup(context, bestOption.NodeCount, bestOption.NodeGroup)
 			if err != nil {
 				return &status.ScaleUpStatus{Result: status.ScaleUpError}, err
 			}

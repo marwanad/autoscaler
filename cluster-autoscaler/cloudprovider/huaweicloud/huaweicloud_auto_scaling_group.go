@@ -204,7 +204,7 @@ func (asg *AutoScalingGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side. Implementation optional.
-func (asg *AutoScalingGroup) Create() (cloudprovider.NodeGroup, error) {
+func (asg *AutoScalingGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrNotImplemented
 }
 

@@ -313,7 +313,7 @@ func (mig *gceMig) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (mig *gceMig) Create() (cloudprovider.NodeGroup, error) {
+func (mig *gceMig) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrNotImplemented
 }
 

@@ -47,7 +47,7 @@ func (_m *NodeGroup) Autoprovisioned() bool {
 }
 
 // Create provides a mock function with given fields:
-func (_m *NodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (_m *NodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	ret := _m.Called()
 
 	var r0 cloudprovider.NodeGroup

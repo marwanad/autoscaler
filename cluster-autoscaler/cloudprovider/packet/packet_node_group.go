@@ -266,7 +266,7 @@ func (ng *packetNodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (ng *packetNodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (ng *packetNodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 

@@ -20,9 +20,11 @@ package agentpoolsclient
 
 import (
 	"context"
+	"net/http"
 
 	"k8s.io/legacy-cloud-providers/azure/retry"
 
+	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/azure-sdk-for-go/services/containerservice/mgmt/2020-04-01/containerservice"
 )
 
@@ -35,6 +37,8 @@ const (
 // Don't forget to run the following command to generate the mock client:
 // mockgen -source=$GOPATH/src/k8s.io/kubernetes/staging/src/k8s.io/legacy-cloud-providers/azure/clients/agentpoolsclient/interface.go -package=mockagentpoolsclient Interface > $GOPATH/src/k8s.io/kubernetes/staging/src/k8s.io/legacy-cloud-providers/azure/clients/agentpoolsclient/mockagentpoolsclient/interface.go
 type Interface interface {
+	CreateOrUpdateAsync(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string, parameters containerservice.AgentPool, etag string) (*azure.Future, *retry.Error)
+	WaitForCreateOrUpdateResult(ctx context.Context, future *azure.Future, resourceGroupName string) (*http.Response, error)
 	CreateOrUpdate(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string, parameters containerservice.AgentPool, etag string) *retry.Error
 	Delete(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string) *retry.Error
 	Get(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string) (containerservice.AgentPool, *retry.Error)

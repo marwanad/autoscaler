@@ -244,7 +244,7 @@ func (ng *nodegroup) Exist() bool {
 
 // Create creates the node group on the cloud nodegroup side.
 // Implementation optional.
-func (ng *nodegroup) Create() (cloudprovider.NodeGroup, error) {
+func (ng *nodegroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	if ng.Exist() {
 		return nil, cloudprovider.ErrAlreadyExist
 	}

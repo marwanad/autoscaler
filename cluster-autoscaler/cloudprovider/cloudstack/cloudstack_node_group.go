@@ -145,7 +145,7 @@ func (asg *asg) Autoprovisioned() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (asg *asg) Create() (cloudprovider.NodeGroup, error) {
+func (asg *asg) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrNotImplemented
 }
 

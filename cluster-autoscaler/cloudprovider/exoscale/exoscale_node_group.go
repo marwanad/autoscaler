@@ -202,7 +202,7 @@ func (n *NodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side. Implementation optional.
-func (n *NodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (n *NodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrNotImplemented
 }
 

@@ -260,7 +260,7 @@ func (ng *NodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (ng *NodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (ng *NodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	klog.V(4).Infof("Creating a new NodeGroup")
 
 	// Forge create node pool parameters (defaulting b2-7 for now)

@@ -18,6 +18,7 @@ package azure
 
 import (
 	"fmt"
+	"github.com/Azure/go-autorest/autorest/azure"
 	"strings"
 	"sync"
 	"time"
@@ -504,7 +505,7 @@ func (agentPool *AKSAgentPool) Exist() bool {
 
 // Create triggers creation of autoprovisioned nodepools on AKS side.
 // not implemented for other vm types.
-func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
+func (agentPool *AKSAgentPool) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	ap := agentPool
 	if !ap.exists && ap.autoprovisioned {
 		ctx, cancel := getContextWithCancel()
@@ -538,7 +539,7 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 			ManagedClusterAgentPoolProfileProperties: &containerservice.ManagedClusterAgentPoolProfileProperties{
 				VMSize:              containerservice.VMSizeTypes(ap.spec.machineType),
 				OsType:              containerservice.Linux,
-				Count:               to.Int32Ptr(int32(ap.curSize)),
+				Count:               to.Int32Ptr(int32(nodeCount)),
 				Type:                containerservice.VirtualMachineScaleSets,
 				OrchestratorVersion: managedCluster.ManagedClusterProperties.KubernetesVersion,
 				Tags: map[string]*string{
@@ -551,21 +552,47 @@ func (agentPool *AKSAgentPool) Create() (cloudprovider.NodeGroup, error) {
 
 		updateCtx, updateCancel := getContextWithCancel()
 		defer updateCancel()
-
 		aksClient := ap.manager.azClient.agentPoolsClient
-		err := aksClient.CreateOrUpdate(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name, pool, "")
-		if err != nil {
-			klog.Errorf("Failed to create AKS nodepool (%q): %v", ap.clusterName, err.Error())
-			return nil, err.Error()
-		}
 
+		future, rerr := aksClient.CreateOrUpdateAsync(updateCtx, ap.resourceGroup, ap.clusterName, ap.azureRef.Name, pool, "")
+		if rerr != nil {
+			klog.Errorf("Failed to create AKS nodepool (%q) - %d for cluster %q: %v", ap.Name, int32(ap.curSize), ap.clusterName, rerr.Error())
+			return nil, rerr.Error()
+		}
+		// Proactively register group so CA core gets the upcoming node info
+		// and back-off
 		ap.manager.RegisterNodeGroup(ap)
 		ap.exists = true
+		go ap.waitForCreateOrUpdateAp(future)
 
 		return ap, nil
 	}
-
 	return nil, cloudprovider.ErrAlreadyExist
+}
+
+func (ap *AKSAgentPool) waitForCreateOrUpdateAp(future *azure.Future) {
+	var err error
+	aksClient := ap.manager.azClient.agentPoolsClient
+
+	defer func() {
+		if err != nil {
+		}
+	}()
+
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+
+	klog.V(3).Infof("Calling aksClient.WaitForCreateOrUpdateResult(%s)", ap.azureRef.Name)
+	httpResponse, err := aksClient.WaitForCreateOrUpdateResult(ctx, future, ap.resourceGroup)
+
+	isSuccess, err := isSuccessHTTPResponse(httpResponse, err)
+	if isSuccess {
+		klog.V(3).Infof("aksClient.WaitForCreateOrUpdateResult(%s) success", ap.azureRef.Name)
+	} else {
+		klog.Errorf("Failed to create or update agentpool", ap.Name, err)
+	}
+	// TODO: think if this is thread-safe when i have more brain cells
+	ap.manager.invalidateCache()
 }
 
 // Delete deletes autoprovisioned node pools. Not supported otherwise.

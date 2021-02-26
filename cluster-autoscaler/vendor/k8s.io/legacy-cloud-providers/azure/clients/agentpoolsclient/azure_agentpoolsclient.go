@@ -301,6 +301,59 @@ func (page AgentPoolResultPage) Values() []containerservice.AgentPool {
 	return *page.mclr.Value
 }
 
+// CreateOrUpdate creates or updates an agetpool asynchronously
+func (c *Client) CreateOrUpdateAsync(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string, parameters containerservice.AgentPool, etag string) (*azure.Future, *retry.Error) {
+	mc := metrics.NewMetricContext("managed_clusters", "create_or_update", resourceGroupName, c.subscriptionID, "")
+
+	// Report errors if the client is rate limited.
+	if !c.rateLimiterWriter.TryAccept() {
+		mc.RateLimitedCount()
+		return nil, retry.GetRateLimitError(true, "CreateOrUpdateAgentPool")
+	}
+
+	// Report errors if the client is throttled.
+	if c.RetryAfterWriter.After(time.Now()) {
+		mc.ThrottledCount()
+		rerr := retry.GetThrottlingError("CreateOrUpdateAgentPool", "client throttled", c.RetryAfterWriter)
+		return nil, rerr
+	}
+
+	resourceID := armclient.GetResourceID(
+		c.subscriptionID,
+		resourceGroupName,
+		"Microsoft.ContainerService/managedClusters",
+		fmt.Sprintf("%s/agentpools/%s", managedClusterName, agentPoolName),
+	)
+	decorators := []autorest.PrepareDecorator{
+		autorest.WithPathParameters("{resourceID}", map[string]interface{}{"resourceID": resourceID}),
+		autorest.WithJSON(parameters),
+	}
+	if etag != "" {
+		decorators = append(decorators, autorest.WithHeader("If-Match", autorest.String(etag)))
+	}
+
+	future, rerr := c.armClient.PutResourceWithDecoratorsAsync(ctx, resourceID, parameters, decorators)
+	mc.Observe(rerr.Error())
+	if rerr != nil {
+		if rerr.IsThrottled() {
+			// Update RetryAfterReader so that no more requests would be sent until RetryAfter expires.
+			c.RetryAfterWriter = rerr.RetryAfter
+		}
+
+		return nil, rerr
+	}
+
+	return future, nil
+}
+
+func (c *Client) WaitForCreateOrUpdateResult(ctx context.Context, future *azure.Future, resourceGroupName string) (*http.Response, error) {
+	mc := metrics.NewMetricContext("managed_clusters", "wait_for_create_or_update_result", resourceGroupName, c.subscriptionID, "")
+	res, err := c.armClient.WaitForAsyncOperationResult(ctx, future, "AgentPoolWaitForCreateOrUpdateResult")
+	mc.Observe(err)
+	return res, err
+}
+
+
 // CreateOrUpdate creates or updates a AgentPool.
 func (c *Client) CreateOrUpdate(ctx context.Context, resourceGroupName, managedClusterName, agentPoolName string, parameters containerservice.AgentPool, etag string) *retry.Error {
 	mc := metrics.NewMetricContext("managed_clusters", "create_or_update", resourceGroupName, c.subscriptionID, "")

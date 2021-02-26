@@ -98,7 +98,7 @@ func (scaleSet *ScaleSet) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (scaleSet *ScaleSet) Create() (cloudprovider.NodeGroup, error) {
+func (scaleSet *ScaleSet) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	return nil, cloudprovider.ErrAlreadyExist
 }
 

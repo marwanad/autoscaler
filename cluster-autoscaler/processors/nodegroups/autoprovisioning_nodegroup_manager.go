@@ -32,13 +32,13 @@ func NewAutoprovisioningNodeGroupManager() NodeGroupManager {
 }
 
 // CreateNodeGroup creates autoprovisioned node group.
-func (p *AutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.AutoscalingContext, nodeGroup cloudprovider.NodeGroup) (CreateNodeGroupResult, errors.AutoscalerError) {
+func (p *AutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.AutoscalingContext, nodeCount int, nodeGroup cloudprovider.NodeGroup) (CreateNodeGroupResult, errors.AutoscalerError) {
 	if !context.AutoscalingOptions.NodeAutoprovisioningEnabled {
 		return CreateNodeGroupResult{}, errors.NewAutoscalerError(errors.InternalError, "tried to create a node group %s, but autoprovisioning is disabled", nodeGroup.Id())
 	}
 
 	oldId := nodeGroup.Id()
-	_, err := nodeGroup.Create()
+	_, err := nodeGroup.Create(nodeCount)
 	if err != nil {
 		context.LogRecorder.Eventf(apiv1.EventTypeWarning, "FailedToCreateNodeGroup",
 			"NodeAutoprovisioning: attempt to create node group %v failed: %v", oldId, err)

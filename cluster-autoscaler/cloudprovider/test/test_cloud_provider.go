@@ -361,7 +361,7 @@ func (tng *TestNodeGroup) Exist() bool {
 }
 
 // Create creates the node group on the cloud provider side.
-func (tng *TestNodeGroup) Create() (cloudprovider.NodeGroup, error) {
+func (tng *TestNodeGroup) Create(nodeCount int) (cloudprovider.NodeGroup, error) {
 	if tng.Exist() {
 		return nil, fmt.Errorf("group already exist")
 	}
