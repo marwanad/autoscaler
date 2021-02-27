@@ -230,11 +230,10 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 
 	go scaleSet.waitForCreateOrUpdateAp(future)
 
-	// TODO: chill for a bit so that things propagate to VMSS and we are able to refresh
-	time.Sleep(30 * time.Second)
 	//// Proactively set it to exist, so that we don't hammer more calls
-	//// eventually the 1 minute refresh will take over
-	//scaleSet.exists = true
+	//// eventually the 1 minute refresh will take over and the
+	///  VMSS will be created
+	scaleSet.exists = true
 
 	scaleSet.invalidateStatusCacheWithLock()
 	return scaleSet, nil
@@ -465,6 +464,9 @@ func (scaleSet *ScaleSet) IncreaseSize(delta int) error {
 		return fmt.Errorf("size increase must be positive")
 	}
 	if scaleSet.Exist() {
+		if scaleSet.vmssName == "" {
+			return fmt.Errorf("ScaleSet: %q is still under creation. Backing-off", scaleSet.Name)
+		}
 		size, err := scaleSet.GetScaleSetSize()
 		if err != nil {
 			return err
