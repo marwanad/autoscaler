@@ -54,6 +54,9 @@ func (p *AutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.Auto
 	context.LogRecorder.Eventf(apiv1.EventTypeNormal, "CreatedNodeGroup",
 		"NodeAutoprovisioning: created new node group %v", newId)
 	metrics.RegisterNodeGroupCreation()
+
+	// TODO: call in cloudprovider.NodeGroups() and get the zonal ones?
+
 	return CreateNodeGroupResult{MainCreatedNodeGroup: newGroup}, nil
 }
 

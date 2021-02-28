@@ -71,6 +71,8 @@ func init() {
 type autoprovisioningSpec struct {
 	machineType    string
 	labels         map[string]string
+	taints         []apiv1.Taint
+	zone		   string
 	extraResources map[string]resource.Quantity
 }
 
@@ -193,8 +195,14 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 	}
 
 	labels := map[string]*string{}
+	taints := []string{}
+
 	for k, v := range scaleSet.autoProvisioningSpec.labels {
 		labels[k] = &v
+	}
+
+	for _, v := range scaleSet.autoProvisioningSpec.taints {
+		taints = append(taints, v.String())
 	}
 
 	// TODO(ace): HACK DUE TO KNOWLEDGE OF AKS IMPLEMENTATION
@@ -218,6 +226,7 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 				"autoprovisioned": to.StringPtr("autonoms"),
 			},
 			NodeLabels: labels,
+			NodeTaints: &taints,
 		},
 	}
 

@@ -126,6 +126,8 @@ func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 			}
 		}
 	}
+	// Add GPU
+	names = append(names, "Standard_NC6")
 	return names, nil
 }
 

@@ -486,6 +486,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 
 			// If possible replace candidate node-info with node info based on crated node group. The latter
 			// one should be more in line with nodes which will be created by node group.
+			// TODO: NOTE - this is our chance to populate the zonal information
 			mainCreatedNodeInfo, err := utils.GetNodeInfoFromTemplate(createNodeGroupResult.MainCreatedNodeGroup, daemonSets, context.PredicateChecker, ignoredTaints)
 			if err == nil {
 				nodeInfos[createNodeGroupResult.MainCreatedNodeGroup.Id()] = mainCreatedNodeInfo

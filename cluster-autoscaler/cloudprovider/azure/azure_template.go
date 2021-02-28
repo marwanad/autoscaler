@@ -41,7 +41,7 @@ func buildInstanceOS(template compute.VirtualMachineScaleSet) string {
 	return instanceOS
 }
 
-func buildGenericLabelsForAutoProvisionedNode(nodeName, skuName, location string) map[string]string{
+func buildGenericLabelsForAutoProvisionedNode(nodeName, skuName, location string, zone string) map[string]string{
 	result := make(map[string]string)
 
 	result[kubeletapis.LabelArch] = cloudprovider.DefaultArch
@@ -52,6 +52,10 @@ func buildGenericLabelsForAutoProvisionedNode(nodeName, skuName, location string
 
 	result[apiv1.LabelInstanceType] = skuName
 	result[apiv1.LabelZoneRegion] = strings.ToLower(location)
+	result[apiv1.LabelZoneRegionStable] = strings.ToLower(location)
+
+	result[apiv1.LabelZoneFailureDomain] = zone
+	result[apiv1.LabelZoneFailureDomainStable] = zone
 
 	result[apiv1.LabelHostname] = nodeName
 
@@ -68,6 +72,7 @@ func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string
 
 	result[apiv1.LabelInstanceType] = *template.Sku.Name
 	result[apiv1.LabelZoneRegion] = strings.ToLower(*template.Location)
+	result[apiv1.LabelZoneRegionStable] = strings.ToLower(*template.Location)
 
 	if template.Zones != nil && len(*template.Zones) > 0 {
 		failureDomains := make([]string, len(*template.Zones))
@@ -76,8 +81,10 @@ func buildGenericLabels(template compute.VirtualMachineScaleSet, nodeName string
 		}
 
 		result[apiv1.LabelZoneFailureDomain] = strings.Join(failureDomains[:], cloudvolume.LabelMultiZoneDelimiter)
+		result[apiv1.LabelZoneFailureDomainStable] = strings.Join(failureDomains[:], cloudvolume.LabelMultiZoneDelimiter)
 	} else {
 		result[apiv1.LabelZoneFailureDomain] = "0"
+		result[apiv1.LabelZoneFailureDomainStable] = "0"
 	}
 
 	result[apiv1.LabelHostname] = nodeName
@@ -130,12 +137,16 @@ func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.N
 	node.Status.Capacity[apiv1.ResourceCPU] = *resource.NewQuantity(vmssType.VCPU, resource.DecimalSI)
 	node.Status.Capacity[gpu.ResourceNvidiaGPU] = *resource.NewQuantity(vmssType.GPU, resource.DecimalSI)
 	node.Status.Capacity[apiv1.ResourceMemory] = *resource.NewQuantity(vmssType.MemoryMb*1024*1024, resource.DecimalSI)
-	// TODO: proper taints
 
+	node.Spec.Taints = set.autoProvisioningSpec.taints
 
 	node.Status.Allocatable = node.Status.Capacity
 
-	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.autoProvisioningSpec.machineType, location)
+	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.autoProvisioningSpec.machineType, location, set.autoProvisioningSpec.zone)
+
+	if isNvidiaEnabledSKU(set.autoProvisioningSpec.machineType) {
+		labels[GPULabel] = "nvidia"
+	}
 	node.Labels = labels
 
 	// Ready status
@@ -213,6 +224,10 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 	// Labels from the Scale Set's Tags
 	node.Labels = cloudprovider.JoinStringMaps(node.Labels, extractLabelsFromScaleSet(template.Tags))
 
+	if isNvidiaEnabledSKU(vmssType.InstanceType) {
+		node.Labels[GPULabel] = "nvidia"
+	}
+
 	// Taints from the Scale Set's Tags
 	node.Spec.Taints = extractTaintsFromScaleSet(template.Tags)
 
@@ -279,4 +294,50 @@ func extractTaintsFromScaleSet(tags map[string]*string) []apiv1.Taint {
 	}
 
 	return taints
+}
+
+
+func isNvidiaEnabledSKU(vmSize string) bool {
+	/* If a new GPU sku becomes available, add a key to this map, but only if you have a confirmation
+	   that we have an agreement with NVIDIA for this specific gpu.
+	*/
+	dm := map[string]bool{
+		// K80
+		"Standard_NC6":   true,
+		"Standard_NC12":  true,
+		"Standard_NC24":  true,
+		"Standard_NC24r": true,
+		// M60
+		"Standard_NV6":      true,
+		"Standard_NV12":     true,
+		"Standard_NV12s_v3": true,
+		"Standard_NV24":     true,
+		"Standard_NV24s_v3": true,
+		"Standard_NV24r":    true,
+		"Standard_NV48s_v3": true,
+		// P40
+		"Standard_ND6s":   true,
+		"Standard_ND12s":  true,
+		"Standard_ND24s":  true,
+		"Standard_ND24rs": true,
+		// P100
+		"Standard_NC6s_v2":   true,
+		"Standard_NC12s_v2":  true,
+		"Standard_NC24s_v2":  true,
+		"Standard_NC24rs_v2": true,
+		// V100
+		"Standard_NC6s_v3":   true,
+		"Standard_NC12s_v3":  true,
+		"Standard_NC24s_v3":  true,
+		"Standard_NC24rs_v3": true,
+		"Standard_ND40s_v3":  true,
+		"Standard_ND40rs_v2": true,
+	}
+	// Trim the optional _Promo suffix.
+	vmSize = strings.TrimSuffix(vmSize, "_Promo")
+	if _, ok := dm[vmSize]; ok {
+		return dm[vmSize]
+	}
+
+	return false
 }
