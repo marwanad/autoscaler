@@ -72,6 +72,7 @@ type autoprovisioningSpec struct {
 	machineType    string
 	labels         map[string]string
 	taints         []apiv1.Taint
+	zonal 		   bool
 	zone		   string
 	extraResources map[string]resource.Quantity
 }
@@ -90,6 +91,7 @@ type ScaleSet struct {
 	sizeRefreshPeriod    time.Duration
 	exists               bool
 	autoprovisioned      bool
+	zone 				 string
 	vmssName string
 	autoProvisioningSpec *autoprovisioningSpec
 
@@ -240,20 +242,27 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 	uniqueNameSuffixSize := 8
 	h := fnv.New64a()
 	h.Write([]byte(time.Now().String()))
-	h.Write([]byte("Standard_M16ms"))
 	r := rand.New(rand.NewSource(int64(h.Sum64())))
 	nodePoolName := fmt.Sprintf("a%08d\n", r.Uint32())[:uniqueNameSuffixSize]
 
-	klog.Infof("Choosing name: %s for autoprovisioned nodeGroup: %s", nodePoolName, scaleSet.Name)
+	numZones := 1
+	if scaleSet.autoProvisioningSpec.zonal {
+		numZones = 3
+	}
+	for i := 1; i <= numZones; i++ {
+		poolName := fmt.Sprintf("%sz%d", nodePoolName, i)
+		pool.AvailabilityZones = to.StringSlicePtr([]string{fmt.Sprintf("%d", i)})
+		klog.Infof("Choosing name: %s for autoprovisioned nodeGroup: %s", poolName, scaleSet.Name)
 
-	rerr = aksClient.CreateOrUpdate(updateCtx, rgName, clusterName, nodePoolName, pool, "")
-	if rerr != nil {
-		klog.Errorf("Failed to create AKS nodepool (%q) - %d for cluster %q: %v", nodePoolName, int32(targetSize), clusterName, rerr.Error())
-		return nil, rerr.Error()
+		rerr = aksClient.CreateOrUpdate(updateCtx, rgName, clusterName, poolName, pool, "")
+		if rerr != nil {
+			klog.Errorf("Failed to create AKS nodepool (%q) - %d for cluster %q: %v", poolName, int32(targetSize), clusterName, rerr.Error())
+			return nil, rerr.Error()
+		}
+		klog.Infof("Successfully created nodepool %s", poolName)
 	}
 
 	//go scaleSet.waitForCreateOrUpdateAp(future)
-	klog.Infof("Sucesfully created nodepool %s. Regenerating caches now and updating nodegroup name", nodePoolName)
 	//// Proactively set it to exist, so that we don't hammer more calls
 	//// eventually the 1 minute refresh will take over and the
 	///  VMSS will be created
@@ -269,8 +278,13 @@ func (scaleSet *ScaleSet) createNodepool(targetSize int) (cloudprovider.NodeGrou
 	// Ensure the scaleSet is registered and return it to the caller
 	// The caller can then choose to scale it up (seems to be the expectation anyways)
 	for _, ap := range scaleSet.manager.getAsgs() {
-		if ap.Id() == nodePoolName {
-			return ap, nil
+		poolNameToReturn := nodePoolName
+		if scaleSet.autoProvisioningSpec.zonal {
+			// Return the first zone for the main group
+			poolNameToReturn = fmt.Sprintf("%sz1", poolNameToReturn)
+		}
+		if ap.Id() == poolNameToReturn {
+				return ap, nil
 		}
 	}
 	return nil, fmt.Errorf("agentpool %s for autoprovisioned template %s not found", nodePoolName, scaleSet.Name)

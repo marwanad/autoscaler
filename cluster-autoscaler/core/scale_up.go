@@ -499,7 +499,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 			if oldId != createNodeGroupResult.MainCreatedNodeGroup.Id() {
 				delete(nodeInfos, oldId)
 			}
-
+			klog.Infof("Got nodeInfo information for: %s as %+v", createNodeGroupResult.MainCreatedNodeGroup.Id(), mainCreatedNodeInfo.Node())
 			for _, nodeGroup := range createNodeGroupResult.ExtraCreatedNodeGroups {
 				nodeInfo, err := utils.GetNodeInfoFromTemplate(nodeGroup, daemonSets, context.PredicateChecker, ignoredTaints)
 
@@ -508,6 +508,8 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 					continue
 				}
 				nodeInfos[nodeGroup.Id()] = nodeInfo
+
+				klog.Infof("Got nodeInfo information for: %s as %+v", nodeGroup.Id(), nodeInfo.Node())
 
 				option, err2 := computeExpansionOption(context, podEquivalenceGroups, nodeGroup, nodeInfo, upcomingNodes)
 				if err2 != nil {
@@ -543,6 +545,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 
 		targetNodeGroups := []cloudprovider.NodeGroup{bestOption.NodeGroup}
 		if context.BalanceSimilarNodeGroups {
+			klog.Infof("Attempting to balance scale between similar node groups")
 			similarNodeGroups, typedErr := processors.NodeGroupSetProcessor.FindSimilarNodeGroups(context, bestOption.NodeGroup, nodeInfos)
 			if typedErr != nil {
 				return &status.ScaleUpStatus{Result: status.ScaleUpError, CreateNodeGroupResults: createNodeGroupResults}, typedErr.AddPrefix("Failed to find matching node groups: ")

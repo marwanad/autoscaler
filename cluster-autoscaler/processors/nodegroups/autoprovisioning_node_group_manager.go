@@ -20,6 +20,7 @@ import (
 	"k8s.io/autoscaler/cluster-autoscaler/metrics"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/errors"
 	"k8s.io/klog/v2"
+	"strings"
 )
 
 // AutoprovisioningNodeGroupManager is responsible for creating/deleting autoprovisioned node groups.
@@ -55,9 +56,23 @@ func (p *AutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.Auto
 		"NodeAutoprovisioning: created new node group %v", newId)
 	metrics.RegisterNodeGroupCreation()
 
-	// TODO: call in cloudprovider.NodeGroups() and get the zonal ones?
-
-	return CreateNodeGroupResult{MainCreatedNodeGroup: newGroup}, nil
+	// Search for zonal groups
+	var zonalExtraGroups []cloudprovider.NodeGroup
+	nodeGroups := context.CloudProvider.NodeGroups()
+	for _, nodeGroup := range nodeGroups {
+		if nodeGroup.Id() == newGroup.Id() {
+			continue
+		}
+		if !nodeGroup.Autoprovisioned() {
+			continue
+		}
+		// big hack lol - keep the state somewhere to link here
+		if strings.HasPrefix(nodeGroup.Id()[:len(nodeGroup.Id())-1], newId[:len(newId)-1]) {
+			klog.V(2).Infof("Found zonal group for: %s with id: %s", newId, nodeGroup.Id())
+			zonalExtraGroups = append(zonalExtraGroups, nodeGroup)
+		}
+	}
+	return CreateNodeGroupResult{MainCreatedNodeGroup: newGroup, ExtraCreatedNodeGroups: zonalExtraGroups}, nil
 }
 
 // RemoveUnneededNodeGroups removes node groups that are not needed anymore.

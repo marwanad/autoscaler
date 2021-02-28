@@ -569,7 +569,10 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 					return err
 				}
 				asg.vmssName = *scaleSet.Name
-
+				if *scaleSet.Zones != nil {
+					zone := *scaleSet.Zones
+					asg.zone = zone[0]
+				}
 				groups = append(groups, asg)
 			}
 

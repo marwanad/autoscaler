@@ -142,7 +142,7 @@ func buildNodeFromAutoprovisioningSpec(set *ScaleSet, location string) (*apiv1.N
 
 	node.Status.Allocatable = node.Status.Capacity
 
-	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.autoProvisioningSpec.machineType, location, set.autoProvisioningSpec.zone)
+	labels := buildGenericLabelsForAutoProvisionedNode(nodeName, set.autoProvisioningSpec.machineType, location, set.zone)
 
 	if isNvidiaEnabledSKU(set.autoProvisioningSpec.machineType) {
 		labels[GPULabel] = "nvidia"
@@ -227,6 +227,8 @@ func buildNodeFromTemplate(scaleSetName string, template compute.VirtualMachineS
 	if isNvidiaEnabledSKU(vmssType.InstanceType) {
 		node.Labels[GPULabel] = "nvidia"
 	}
+
+	node.Labels["agentpool"] = node.Labels["poolName"]
 
 	// Taints from the Scale Set's Tags
 	node.Spec.Taints = extractTaintsFromScaleSet(template.Tags)

@@ -186,6 +186,8 @@ func (azure *AzureCloudProvider) NewNodeGroup(machineType string, labels map[str
 		machineType:    machineType,
 		labels:         labels,
 		extraResources: extraResources,
+		// TODO: pass in this as part of the NewNodeGroup interface if we spot the failure domain affinity
+		zonal: true,
 	}
 
 	return ng, nil

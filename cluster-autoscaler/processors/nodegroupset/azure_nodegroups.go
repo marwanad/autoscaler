@@ -38,6 +38,9 @@ func CreateAzureNodeInfoComparator(extraIgnoredLabels []string) NodeInfoComparat
 		azureIgnoredLabels[k] = v
 	}
 	azureIgnoredLabels[AzureNodepoolLabel] = true
+	azureIgnoredLabels["poolName"] = true
+	azureIgnoredLabels["creationSource"] = true
+
 	for _, k := range extraIgnoredLabels {
 		azureIgnoredLabels[k] = true
 	}
