@@ -38,21 +38,23 @@ func (p *AutoprovisioningNodeGroupManager) CreateNodeGroup(context *context.Auto
 	}
 
 	oldId := nodeGroup.Id()
-	_, err := nodeGroup.Create(nodeCount)
+	newGroup, err := nodeGroup.Create(nodeCount)
 	if err != nil {
 		context.LogRecorder.Eventf(apiv1.EventTypeWarning, "FailedToCreateNodeGroup",
 			"NodeAutoprovisioning: attempt to create node group %v failed: %v", oldId, err)
 		// TODO(maciekpytel): add some metric here after figuring out failure scenarios
 		return CreateNodeGroupResult{}, errors.ToAutoscalerError(errors.CloudProviderError, err)
 	}
-	newId := nodeGroup.Id()
+	newId := newGroup.Id()
+
+	// NOTE: this where the magic happens to populate the real Id.
 	if newId != oldId {
 		klog.V(2).Infof("Created node group %s based on template node group %s, will use new node group in scale-up", newId, oldId)
 	}
 	context.LogRecorder.Eventf(apiv1.EventTypeNormal, "CreatedNodeGroup",
 		"NodeAutoprovisioning: created new node group %v", newId)
 	metrics.RegisterNodeGroupCreation()
-	return CreateNodeGroupResult{MainCreatedNodeGroup: nodeGroup}, nil
+	return CreateNodeGroupResult{MainCreatedNodeGroup: newGroup}, nil
 }
 
 // RemoveUnneededNodeGroups removes node groups that are not needed anymore.

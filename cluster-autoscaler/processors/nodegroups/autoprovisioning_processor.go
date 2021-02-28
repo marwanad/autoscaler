@@ -49,7 +49,6 @@ func (p *AutoprovisioningNodeGroupListProcessor) Process(context *context.Autosc
 		nodeInfos, unschedulablePods)
 	newGroupsCount += len(newNodeGroups)
 	nodeGroups = append(nodeGroups, newNodeGroups...)
-
 	gpuRequests := GetGpuRequests(unschedulablePods)
 	for _, gpuRequestInfo := range gpuRequests {
 		klog.V(4).Info("Adding node groups using GPU to NAP simulations")

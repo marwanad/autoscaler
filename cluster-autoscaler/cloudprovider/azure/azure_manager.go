@@ -525,6 +525,10 @@ func (m *AzureManager) fetchExplicitAsgs(specs []string) error {
 	return nil
 }
 
+
+// TODO: register those properly with the VMSS name
+// We can always return the CreateNodeGroupResult with the real VMSS name and regenerate cache
+// to register the scaling group
 func (m *AzureManager) fetchAutoprovisionedGroups() error {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
@@ -544,10 +548,9 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 	for _, scaleSet := range result {
 		if val, ok := scaleSet.Tags["autoprovisioned"]; ok {
 			if val != nil && strings.EqualFold(*val, "autonoms") {
-				klog.Infof("Adding scaleSet %s to the list of autoprovisioned pools", *scaleSet.Name)
 				s1 := strings.Split(*scaleSet.Name, "aks-")
 				s2 := strings.Split(s1[1], "-")
-				klog.Infof("adding it under name: %s", s2[0])
+				klog.Infof("Adding scaleSet %s to the list of autoprovisioned pools under name: %s", *scaleSet.Name, s2[0])
 
 				autprovisionedGroups = append(autprovisionedGroups, scaleSet)
 				spec := &dynamic.NodeGroupSpec{
@@ -566,35 +569,30 @@ func (m *AzureManager) fetchAutoprovisionedGroups() error {
 					return err
 				}
 				asg.vmssName = *scaleSet.Name
+
 				groups = append(groups, asg)
 			}
 
 		}
 	}
-	//if len(groups) == 0 {
-	//	klog.Info("Found no autoprovisioned scale sets. Skipping Additions and attempting to clear all registered ones")
-	//	return nil
-	//}
 
 	changed := false
 	exists := make(map[string]bool)
 	for _, asg := range groups {
 		asgID := asg.Id()
-		klog.Infof("Setting exists to true for ASG: %s", asgID)
 		exists[asgID] = true
 		if m.explicitlyConfigured[asgID] {
 			klog.V(3).Infof("Ignoring explicitly configured scale set since its not autoprovisioned.", asg.Id())
 			continue
 		}
 		if m.RegisterAsg(asg) {
-			klog.V(3).Infof("REgistered autoprovisioned scale set %s", asg.Id())
+			klog.V(3).Infof("Registered autoprovisioned scale set %s with exists: %b ", asg.Id(), asg.Exist())
 			changed = true
 		}
 	}
 
 	// find the ones that got deleted and deregister them
 	for _, asg := range m.getAsgs() {
-		klog.Infof("looping through ASG list with: %s", asg.Id())
 		asgID := asg.Id()
 		if !exists[asgID] && !m.explicitlyConfigured[asgID] {
 			klog.Infof("ASG %s does not exist - removing from cache", asgID)

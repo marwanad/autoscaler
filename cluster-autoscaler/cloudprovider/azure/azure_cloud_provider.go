@@ -18,13 +18,12 @@ package azure
 
 import (
 	"fmt"
-	"hash/fnv"
 	"io"
 	"k8s.io/autoscaler/cluster-autoscaler/config/dynamic"
 	"k8s.io/autoscaler/cluster-autoscaler/utils/gpu"
-	"math/rand"
 	"os"
 	"strings"
+	"time"
 
 	apiv1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -134,11 +133,19 @@ func (azure *AzureCloudProvider) GetAvailableMachineTypes() ([]string, error) {
 // created on the cloud provider side. The node group is not returned by NodeGroups() until it is created.
 func (azure *AzureCloudProvider) NewNodeGroup(machineType string, labels map[string]string, systemLabels map[string]string,
 	taints []apiv1.Taint, extraResources map[string]resource.Quantity) (cloudprovider.NodeGroup, error) {
-	uniqueNameSuffixSize := 8
-	h := fnv.New64a()
-	h.Write([]byte(machineType))
-	r := rand.New(rand.NewSource(int64(h.Sum64())))
-	nodePoolName := fmt.Sprintf("a%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+	//uniqueNameSuffixSize := 8
+	//h := fnv.New64a()
+	//h.Write([]byte(machineType))
+	//r := rand.New(rand.NewSource(int64(h.Sum64())))
+	//nodePoolName := fmt.Sprintf("a%08d\n", r.Uint32())[:uniqueNameSuffixSize]
+
+	// Use an auto-generated nodepool with timestamp to ensure that
+	// the scale up loop progresses. Otherwise, you may end up in the case
+	// where you create a node group, then the next scale loop think it's not
+	// there because the generate template here will override the existing created nodegroup
+	// if we're just hashing SKU names
+
+	nodePoolName := fmt.Sprintf("%s-%d", machineType, time.Now().Unix())
 
 	if gpuRequest, found := extraResources[gpu.ResourceNvidiaGPU]; found {
 		gpuType, found := systemLabels[GPULabel]

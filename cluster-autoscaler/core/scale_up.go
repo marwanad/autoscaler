@@ -313,6 +313,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 	nodes []*apiv1.Node, daemonSets []*appsv1.DaemonSet, nodeInfos map[string]*schedulerframework.NodeInfo, ignoredTaints taints.TaintKeySet) (*status.ScaleUpStatus, errors.AutoscalerError) {
 	// From now on we only care about unschedulable pods that were marked after the newest
 	// node became available for the scheduler.
+
 	if len(unschedulablePods) == 0 {
 		klog.V(1).Info("No unschedulable pods")
 		return &status.ScaleUpStatus{Result: status.ScaleUpNotNeeded}, nil
@@ -372,7 +373,6 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 			return &status.ScaleUpStatus{Result: status.ScaleUpError}, errors.ToAutoscalerError(errors.InternalError, errProc)
 		}
 	}
-
 	podEquivalenceGroups := buildPodEquivalenceGroups(unschedulablePods)
 
 	skippedNodeGroups := map[string]status.Reasons{}
@@ -473,6 +473,7 @@ func ScaleUp(context *context.AutoscalingContext, processors *ca_processors.Auto
 		}
 
 		createNodeGroupResults := make([]nodegroups.CreateNodeGroupResult, 0)
+		// first, create the nodegroup if it doesn't exist
 		if !bestOption.NodeGroup.Exist() {
 			klog.Infof("Best option is to create node group: %s with count %d", bestOption.NodeGroup.Id(), bestOption.NodeCount)
 			oldId := bestOption.NodeGroup.Id()
